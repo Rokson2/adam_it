@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package adam;
+
+option go_package = "github.com/adam/runtime/proto";
+
+// Core Runtime Service
+service RuntimeService {
+  // Execute a script in a sandboxed container
+  rpc ExecuteScript(ScriptRequest) returns (ScriptResponse);
+  
+  // Validate if a path can be accessed
+  rpc ValidatePath(PathRequest) returns (PathResponse);
+  
+  // Get current security profile
+  rpc GetProfile(ProfileRequest) returns (ProfileResponse);
+  
+  // Set active security profile
+  rpc SetProfile(SetProfileRequest) returns (ProfileResponse);
+  
+  // Get runtime status
+  rpc GetStatus(StatusRequest) returns (StatusResponse);
+}
+
+// Script execution
+message ScriptRequest {
+  string script_path = 1;
+  repeated string args = 2;
+  map<string, string> env = 3;
+  string profile = 4;
+  int32 timeout_seconds = 5;
+}
+
+message ScriptResponse {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+  bool timed_out = 4;
+}
+
+// Path validation
+message PathRequest {
+  string path = 1;
+  string operation = 2;  // "read", "write", "execute"
+}
+
+message PathResponse {
+  bool allowed = 1;
+  string resolved_path = 2;
+  string denial_reason = 3;
+}
+
+// Profile management
+message ProfileRequest {}
+
+message SetProfileRequest {
+  string profile_name = 1;
+}
+
+message ProfileResponse {
+  string name = 1;
+}
+
+// Status
+message StatusRequest {}
+
+message StatusResponse {
+  bool runtime_healthy = 1;
+  int32 active_containers = 2;
+  string current_profile = 3;
+}

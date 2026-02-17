@@ -1,0 +1,25 @@
+name: permissive
+description: "For trusted environments only - no container isolation, full home access"
+
+file_access:
+  read:
+    - ~
+  write:
+    - ~
+  denied:
+    - ~/.ssh/id_*
+    - ~/.gnupg/private-keys-v1.d
+
+container:
+  runtime: none
+  network: true
+  read_only_rootfs: false
+  memory_limit_mb: 0
+  cpu_limit_percent: 0
+  timeout_seconds: 0
+
+audit:
+  log_file_ops: false
+  log_shell_cmds: true
+  log_model_calls: false
+  retention_days: 7

@@ -1,0 +1,24 @@
+name: paranoid
+description: "Maximum isolation for untrusted operations - Firecracker/VM isolation, explicit access only"
+
+file_access:
+  read: []
+  write: []
+  denied:
+    - ~
+
+container:
+  runtime: firecracker
+  network: false
+  read_only_rootfs: true
+  memory_limit_mb: 256
+  cpu_limit_percent: 25
+  timeout_seconds: 60
+  seccomp_profile: "default"
+
+audit:
+  log_file_ops: true
+  log_shell_cmds: true
+  log_model_calls: true
+  retention_days: 90
+  tamper_evident: true
