@@ -5,6 +5,7 @@ Provides a high-level interface to communicate with the Go runtime
 for script execution, path validation, and profile management.
 """
 
+import time
 import grpc
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -165,18 +166,25 @@ class RuntimeClient:
         response = self._get_stub().SetProfile(request)
         return response.name == profile_name
 
-    def is_available(self) -> bool:
+    def is_available(self, retries: int = 3, delay: float = 0.5) -> bool:
         """
         Check if the runtime is available.
+
+        Args:
+            retries: Number of retries before giving up
+            delay: Delay between retries in seconds
 
         Returns:
             True if runtime is running and responding
         """
-        try:
-            self.get_status()
-            return True
-        except Exception:
-            return False
+        for attempt in range(retries):
+            try:
+                self.get_status()
+                return True
+            except Exception:
+                if attempt < retries - 1:
+                    time.sleep(delay)
+        return False
 
     def close(self):
         """Close the gRPC channel."""

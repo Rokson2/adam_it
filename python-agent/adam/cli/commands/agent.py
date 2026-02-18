@@ -1,5 +1,6 @@
 """Agent commands."""
 
+import os
 import typer
 import asyncio
 from rich.console import Console
@@ -23,6 +24,30 @@ def agent_main():
     pass
 
 
+def check_runtime() -> RuntimeClient:
+    """Check if runtime is available and return client."""
+    client = RuntimeClient()
+    
+    # First check if socket exists
+    if not os.path.exists(client.socket_path):
+        console.print("[red]Error: Adam Runtime is not running[/red]")
+        console.print(f"[dim]Socket not found: {client.socket_path}[/dim]")
+        console.print("\nStart it with: [cyan]adam-runtime[/cyan]")
+        console.print("\nOr if using Docker, ensure the container was started correctly:")
+        console.print("  [dim]docker-compose -f docker-compose.test.yml up -d[/dim]")
+        raise typer.Exit(1)
+    
+    # Try to connect with retries
+    if not client.is_available(retries=3, delay=0.5):
+        console.print("[red]Error: Adam Runtime is not responding[/red]")
+        console.print("[dim]The socket exists but the runtime is not accepting connections.[/dim]")
+        console.print("\nTry restarting the runtime:")
+        console.print("  [cyan]adam-runtime &[/cyan]")
+        raise typer.Exit(1)
+    
+    return client
+
+
 @app.command()
 def start(
     model: str = typer.Option(
@@ -33,11 +58,7 @@ def start(
 ):
     """Start interactive agent session."""
     # Check runtime
-    client = RuntimeClient()
-    if not client.is_available():
-        console.print("[red]Error: Adam Runtime is not running[/red]")
-        console.print("Start it with: [cyan]adam-runtime[/cyan]")
-        raise typer.Exit(1)
+    client = check_runtime()
 
     # Map mode string to enum
     mode_map = {
@@ -116,10 +137,7 @@ def ask(
     provider: str = typer.Option("anthropic", "--provider", "-p"),
 ):
     """Send a single message to Adam."""
-    client = RuntimeClient()
-    if not client.is_available():
-        console.print("[red]Runtime not available[/red]")
-        raise typer.Exit(1)
+    client = check_runtime()
 
     agent_config = LoopConfig(
         model=model,
