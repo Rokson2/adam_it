@@ -3,6 +3,7 @@ Adam Dashboard - Interactive startup interface.
 """
 
 import os
+import sys
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -280,6 +281,13 @@ def interactive_setup():
             do_setup_api()
 
 
+def run_agent_start():
+    """Run the agent start command, preserving environment."""
+    # Use os.execvp to replace current process with adam agent start
+    # This preserves the terminal for interactive use
+    os.execvp("adam", ["adam", "agent", "start"])
+
+
 def run_dashboard():
     """Run the interactive dashboard."""
     console.clear()
@@ -334,11 +342,10 @@ def run_dashboard():
             elif not status["providers_configured"]:
                 console.print("[red]Add an API key first (option 2)[/red]")
             else:
-                console.print("\n[bold cyan]Starting chat...[/bold cyan]")
-                console.print("[dim]Type 'exit' or Ctrl+D to return to dashboard[/dim]\n")
-                # Import and call agent start
-                import subprocess
-                subprocess.run(["adam", "agent", "start"])
+                console.print("\n[bold cyan]Starting chat...[/bold cyan]\n")
+                # Use os.execvp to replace current process
+                # This preserves env vars and terminal for interactive use
+                run_agent_start()
                 
         elif choice == "4":
             # View settings
