@@ -61,11 +61,12 @@ def print_logo():
     """Print Adam ASCII logo."""
     logo = r"""
 [bold cyan]
-     ___    __  __________  ____  ____
-    /   |  /  |/  / ___/ _ \/ __ \/  _/
-   / /| | / /|_/ / /__/ , _/ /_/ // /  
-  / ___ |/ /  / /\___/_/|_|\____/___/  
- /_/  |_/_/  /_/                        
+           _    _ _______ _    _ _____    _  _____ _____ _   _ 
+     /\   | |  | |__   __| |  | |  __ \  | |/ /_ _|_   _| \ | |
+    /  \  | |  | |  | |  | |__| | |__) | | ' / | |  | | |  \| |
+   / /\ \ | |  | |  | |  |  __  |  _  /  |  <  | |  | | | . ` |
+  / ____ \| |__| |  | |  | |  | | | \ \  | . \ | | _| |_| |\  |
+ /_/    \_\\____/   |_|  |_|  |_|_|  \_\ |_|\_\___|_____|_| \_|
 [/bold cyan]
 [dim]Your Personal AI Assistant v0.1.0[/dim]
 """
@@ -150,50 +151,133 @@ def print_status_dashboard():
     return status
 
 
-def print_main_menu():
-    """Print compact main menu for after setup."""
-    menu = """
-[cyan]Commands[/cyan]
-  [yellow]ask[/yellow] "message"    Send a message to Adam
-  [yellow]agent start[/yellow]      Start interactive session
-  [yellow]vault[/yellow]            Manage secrets & API keys
-  [yellow]--help[/yellow]           Show all commands
+def do_vault_unlock():
+    """Perform vault unlock with interactive prompts."""
+    from adam.storage.vault import get_vault
+    from adam.providers.registry import load_keys_from_vault
+    
+    vault = get_vault()
+    
+    if vault.is_unlocked:
+        console.print("[yellow]Vault is already unlocked[/yellow]")
+        return True
+    
+    is_new_vault = not vault.vault_exists
+    
+    if is_new_vault:
+        passphrase = Prompt.ask("Enter new passphrase", password=True)
+        confirm = Prompt.ask("Confirm passphrase", password=True)
+        
+        if passphrase != confirm:
+            console.print("[red]Passphrases do not match[/red]")
+            return False
+    else:
+        passphrase = Prompt.ask("Enter passphrase", password=True)
+    
+    if vault.unlock(passphrase):
+        os.environ["ADAM_VAULT_PASSPHRASE"] = passphrase
+        load_keys_from_vault(vault)
+        
+        if is_new_vault:
+            console.print("\n[bold green]✓ Password Set![/bold green]")
+            console.print("[bold red]⚠ Don't forget it - it cannot be reset![/bold red]")
+            console.print("[dim]Your secrets are encrypted with this passphrase.[/dim]\n")
+        else:
+            console.print("[green]✓ Vault unlocked[/green]")
+        return True
+    else:
+        console.print("[red]Failed to unlock vault - wrong passphrase?[/red]")
+        return False
 
-[dim]Tip: Just type your message after 'adam' to chat![/dim]
-"""
-    console.print(Panel(menu, title="[bold]Adam CLI[/bold]", border_style="dim"))
+
+def do_setup_api():
+    """Perform API key setup with interactive prompts."""
+    from adam.cli.commands.vault import API_PROVIDERS
+    
+    vault = get_vault()
+    
+    if not vault.is_unlocked:
+        console.print("[red]Vault is locked. Unlock first.[/red]")
+        return False
+    
+    console.print("\n[bold cyan]🔌 API Key Setup[/bold cyan]")
+    console.print("[dim]Your keys are encrypted and never exposed to LLMs or tools.[/dim]\n")
+    
+    # Show available providers
+    table = Table(show_header=True, title="Available LLM Providers")
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Provider", style="cyan")
+    table.add_column("Description", style="white")
+    table.add_column("Status", style="green")
+    
+    provider_list = list(API_PROVIDERS.items())
+    for idx, (provider_id, info) in enumerate(provider_list, 1):
+        has_key = keystore.has(provider_id)
+        status = "✓ Configured" if has_key else "○ Not set"
+        status_style = "green" if has_key else "yellow"
+        table.add_row(
+            str(idx),
+            info["name"],
+            info["description"],
+            f"[{status_style}]{status}[/{status_style}]"
+        )
+    
+    console.print(table)
+    console.print()
+    
+    choices = [str(i) for i in range(1, len(provider_list) + 1)] + ["0"]
+    selection = Prompt.ask(
+        "Select provider to configure (0 to finish)",
+        choices=choices,
+        default="1"
+    )
+    
+    if selection == "0":
+        return True
+    
+    provider_id, info = provider_list[int(selection) - 1]
+    
+    console.print(f"\n[bold]{info['name']}[/bold]")
+    console.print(f"[dim]{info['description']}[/dim]")
+    console.print(f"[dim]Get your API key: {info['url']}[/dim]\n")
+    
+    api_key = Prompt.ask("Enter API key (leave empty to skip)", password=True)
+    
+    if api_key:
+        vault.set(info["key"], api_key)
+        keystore.set(provider_id, api_key)
+        console.print(f"[green]✓ {info['name']} API key saved[/green]")
+        console.print(f"[dim]Key preview: {keystore.preview(provider_id, 4)}[/dim]")
+        return True
+    else:
+        console.print("[yellow]Skipped - no key provided[/yellow]")
+        return False
 
 
 def interactive_setup():
     """Run interactive setup flow."""
-    from adam.cli.commands.vault import unlock as vault_unlock, setup_api
-    
     status = get_status()
     
     # If vault doesn't exist, create it
     if not status["vault_exists"]:
         console.print("\n[bold cyan]Welcome to Adam! Let's get you set up.[/bold cyan]\n")
         console.print("First, create a passphrase to protect your secrets.\n")
-        vault_unlock.callback(passphrase=None)
+        if not do_vault_unlock():
+            return
         status = get_status()
     
     # If vault exists but locked, prompt to unlock
     if not status["vault_unlocked"]:
-        passphrase = os.environ.get("ADAM_VAULT_PASSPHRASE")
-        if passphrase:
-            vault = get_vault()
-            vault.unlock(passphrase)
-            load_keys_from_vault(vault)
-        else:
-            console.print("\n[yellow]Vault is locked. Enter your passphrase to continue.[/yellow]\n")
-            vault_unlock.callback(passphrase=None)
+        console.print("\n[yellow]Vault is locked. Enter your passphrase to continue.[/yellow]\n")
+        if not do_vault_unlock():
+            return
         status = get_status()
     
     # If no API keys, offer to set up
     if status["vault_unlocked"] and not status["providers_configured"]:
         console.print("\n[bold cyan]Now let's add an API key so Adam can respond.[/bold cyan]\n")
         if Confirm.ask("Would you like to add an API key now?", default=True):
-            setup_api.callback()
+            do_setup_api()
 
 
 def run_dashboard():
@@ -232,17 +316,15 @@ def run_dashboard():
         
         if choice == "1":
             # Unlock vault
-            from adam.cli.commands.vault import unlock as vault_unlock
-            vault_unlock.callback(passphrase=None)
+            do_vault_unlock()
             status = get_status()
             
         elif choice == "2":
             # Add API key
-            from adam.cli.commands.vault import setup_api
             if not status["vault_unlocked"]:
                 console.print("[red]Unlock vault first (option 1)[/red]")
             else:
-                setup_api.callback()
+                do_setup_api()
                 status = get_status()
                 
         elif choice == "3":
@@ -252,15 +334,31 @@ def run_dashboard():
             elif not status["providers_configured"]:
                 console.print("[red]Add an API key first (option 2)[/red]")
             else:
-                from adam.cli.commands.agent import start as agent_start
                 console.print("\n[bold cyan]Starting chat...[/bold cyan]")
                 console.print("[dim]Type 'exit' or Ctrl+D to return to dashboard[/dim]\n")
-                agent_start.callback()
+                # Import and call agent start
+                import subprocess
+                subprocess.run(["adam", "agent", "start"])
                 
         elif choice == "4":
             # View settings
-            from adam.cli.commands.vault import status as vault_status
-            vault_status.callback()
+            vault = get_vault()
+            console.print("\n[bold]Vault Status[/bold]")
+            console.print(f"  Unlocked: {'[green]Yes[/green]' if vault.is_unlocked else '[yellow]No[/yellow]'}")
+            console.print(f"  Exists: {'[green]Yes[/green]' if vault.vault_exists else '[yellow]No[/yellow]'}")
+            
+            if vault.is_unlocked:
+                keys = vault.list_keys()
+                console.print(f"  Keys stored: {len(keys)}")
+                
+                console.print("\n[bold]Secure Keystore[/bold]")
+                providers = keystore.list_providers()
+                if providers:
+                    for p in providers:
+                        preview = keystore.preview(p, 4)
+                        console.print(f"  • {p}: {preview}")
+                else:
+                    console.print("  [dim]No API keys loaded[/dim]")
             
         elif choice.lower() == "q":
             console.print("\n[dim]Goodbye![/dim]")
