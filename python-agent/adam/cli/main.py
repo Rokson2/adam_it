@@ -2,6 +2,7 @@
 Adam CLI - Main entry point.
 """
 
+import os
 import typer
 from rich.console import Console
 from typing import Optional
@@ -15,6 +16,7 @@ app = typer.Typer(
     name="adam",
     help="Adam - Your Personal AI Assistant",
     add_completion=True,
+    no_args_is_help=False,  # We handle this ourselves
 )
 console = Console()
 
@@ -23,13 +25,25 @@ console = Console()
 def main(
     ctx: typer.Context,
     version: bool = typer.Option(False, "--version", "-v", help="Show version and exit"),
+    no_dashboard: bool = typer.Option(False, "--no-dashboard", "-n", help="Skip dashboard, show help"),
 ):
     """Adam - Personal AI Assistant"""
     if version:
         console.print(f"Adam v{__version__}")
         raise typer.Exit()
-    if ctx.invoked_subcommand is None:
+    
+    # If a subcommand is being invoked, let it handle things
+    if ctx.invoked_subcommand is not None:
+        return
+    
+    # If --no-dashboard or ADAM_NO_DASHBOARD is set, show help instead
+    if no_dashboard or os.environ.get("ADAM_NO_DASHBOARD"):
         console.print(ctx.get_help())
+        return
+    
+    # Show interactive dashboard
+    from adam.cli.dashboard import run_dashboard
+    run_dashboard()
 
 
 from . import agent, vault, profile, sync, cron
@@ -50,6 +64,13 @@ def ask(
     from .agent import ask as agent_ask
 
     agent_ask(message, model)
+
+
+@app.command()
+def start():
+    """Start Adam dashboard (same as running 'adam' with no arguments)"""
+    from adam.cli.dashboard import run_dashboard
+    run_dashboard()
 
 
 if __name__ == "__main__":
