@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  adam:
+    build:
+      context: .
+      dockerfile: container/Dockerfile.quick
+    container_name: adam-quick
+    stdin_open: true
+    tty: true
+    volumes:
+      - adam-test-data:/root/.adam
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  adam-test-data:

@@ -1,0 +1,25 @@
+# Quick test image for Adam - uses pre-built binaries
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy pre-built Go binary
+COPY go-runtime/bin/adam-runtime /usr/local/bin/adam-runtime
+RUN chmod +x /usr/local/bin/adam-runtime
+
+# Copy Python package
+COPY python-agent/ /app/python-agent/
+RUN cd python-agent && pip install --no-cache-dir -e .
+
+# Copy profiles
+COPY profiles/ /root/.adam/profiles/
+
+# Create directories
+RUN mkdir -p /root/.adam/{data,logs,memory,vault,workspace}
+
+WORKDIR /root
+
+# Startup script
+RUN echo '#!/bin/bash\nadam-runtime --profile balanced --profiles /root/.adam/profiles &\nsleep 2\nexec bash' > /start.sh && chmod +x /start.sh
+
+ENTRYPOINT ["/start.sh"]

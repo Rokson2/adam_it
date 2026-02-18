@@ -2,7 +2,7 @@
 Configuration schemas for Adam.
 """
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, Dict, Any
 from pathlib import Path
 
@@ -10,16 +10,17 @@ from pathlib import Path
 class ProviderConfig(BaseModel):
     """Configuration for an LLM provider."""
 
+    model_config = ConfigDict(extra="allow")
+
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     enabled: bool = True
 
-    class Config:
-        extra = "allow"
-
 
 class ProvidersConfig(BaseModel):
     """Configuration for all LLM providers."""
+
+    model_config = ConfigDict(extra="allow")
 
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -28,9 +29,6 @@ class ProvidersConfig(BaseModel):
         default_factory=lambda: ProviderConfig(api_base="http://localhost:11434")
     )
     deepseek: ProviderConfig = Field(default_factory=ProviderConfig)
-
-    class Config:
-        extra = "allow"
 
 
 class TierModelsConfig(BaseModel):
@@ -67,9 +65,8 @@ class ProfileConfig(BaseModel):
 class AdamConfig(BaseModel):
     """Root configuration for Adam."""
 
+    model_config = ConfigDict(extra="allow")
+
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
-
-    class Config:
-        extra = "allow"

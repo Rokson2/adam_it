@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  adam:
+    build:
+      context: .
+      dockerfile: container/Dockerfile.test
+    container_name: adam-test
+    hostname: adam
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: false  # Need write for workspace
+    volumes:
+      # Persist data across restarts
+      - adam-data:/root/.adam
+      # Mount your local Documents for testing (read-only)
+      # Uncomment and adjust path as needed:
+      # - ~/Documents:/mnt/documents:ro
+    environment:
+      - ADAM_HOME=/root/.adam
+    stdin_open: true
+    tty: true
+    networks:
+      - adam-net
+
+volumes:
+  adam-data:
+    driver: local
+
+networks:
+  adam-net:
+    driver: bridge
