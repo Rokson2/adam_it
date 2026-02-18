@@ -22,6 +22,14 @@ from ..runtime import RuntimeClient
 from ..config import AdamConfig
 
 
+class AgentError(Exception):
+    """Custom exception for agent errors."""
+    def __init__(self, message: str, original_error: str = None):
+        self.message = message
+        self.original_error = original_error or message
+        super().__init__(message)
+
+
 @dataclass
 class LoopConfig:
     """Configuration for agent loop behavior."""
@@ -121,7 +129,7 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
         if self._provider is None:
             self._provider = get_provider(self.config.provider)
             if not self._provider:
-                raise ValueError(f"Provider not available: {self.config.provider}")
+                raise AgentError(f"Provider not available: {self.config.provider}")
         return self._provider
 
     def _get_system_prompt(self) -> str:
@@ -144,6 +152,9 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
 
         Returns:
             Final response string
+
+        Raises:
+            AgentError: When an API or execution error occurs
         """
         self.session.add("user", user_message)
 
@@ -164,10 +175,12 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
                     model=model,
                     tools=self.tools.get_anthropic_tools(),
                 )
+            except AgentError:
+                raise  # Re-raise our custom errors
             except Exception as e:
-                error_msg = f"LLM error: {str(e)}"
+                error_msg = str(e)
                 self.state.errors.append(error_msg)
-                return f"I encountered an error: {error_msg}"
+                raise AgentError(f"API Error: {error_msg}", error_msg)
 
             if response.content:
                 self.session.add("assistant", response.content)
