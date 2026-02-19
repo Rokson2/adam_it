@@ -78,3 +78,4 @@ python-agent/adam/runtime/*_pb2.py
 python-agent/adam/runtime/*_pb2_grpc.py
 go-runtime/proto/*.pb.go
 go-runtime/proto/*_grpc.pb.go
+.ruff_cache/

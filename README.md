@@ -1,6 +1,8 @@
-# Adam - Personal AI Assistant
+# ADAM - Personal AI Assistant
 
 A local-first, security-focused personal AI assistant with containerized script execution and encrypted storage.
+
+**Author:** Arbeey (arbeey@proton.me)
 
 ## Features
 
@@ -11,6 +13,7 @@ A local-first, security-focused personal AI assistant with containerized script 
 - **Intelligent Routing**: Automatic model selection based on task complexity
 - **Persistent Memory**: Long-term semantic memory via Mem0 + Chroma
 - **Scheduled Tasks**: Cron-like scheduling for automated workflows
+- **Interactive Dashboard**: User-friendly CLI with setup guidance and HUD
 
 ## Quick Start
 
@@ -24,31 +27,39 @@ A local-first, security-focused personal AI assistant with containerized script 
 
 ```bash
 # Clone
-git clone https://github.com/yourname/adam.git
-cd adam
+git clone https://github.com/Rokson2/adam_it.git
+cd adam_it
 
 # Install
 make install
 
 # Or manually
-cd go-runtime && go build -o bin/adam-runtime ./cmd/adam-runtime
+cd go-runtime && go build -o ~/.local/bin/adam-runtime ./cmd/adam-runtime
 cd ../python-agent && pip install -e .
 ```
 
 ### Initialize
 
 ```bash
-# Unlock vault
-adam vault unlock
-
-# Add API key
-adam vault add ANTHROPIC_API_KEY
-
 # Start runtime (in one terminal)
-adam-runtime
+adam-runtime &
 
-# Chat (in another terminal)
-adam agent start
+# Run Adam dashboard
+adam
+```
+
+First run will guide you through:
+1. Creating a vault passphrase
+2. Adding an API key for your LLM provider
+
+### Using Docker
+
+```bash
+docker-compose -f docker-compose.test.yml up -d
+docker exec -it adam-test bash
+# Inside container:
+export ADAM_VAULT_PASSPHRASE=your-password
+adam
 ```
 
 ## Usage
@@ -129,6 +140,16 @@ adam sync import backup.tar.gz
 | Paranoid | Firecracker | Explicit grants only | Untrusted code |
 | Permissive | None | Full home | Trusted environments |
 
+## Supported LLM Providers
+
+| Provider | Description |
+|----------|-------------|
+| Anthropic | Claude 3.5 Sonnet, Haiku, Opus |
+| OpenAI | GPT-4, GPT-4 Turbo |
+| OpenRouter | 100+ models via single API |
+| DeepSeek | DeepSeek Chat, Coder |
+| Ollama | Local models (no API key needed) |
+
 ## Configuration
 
 Config file: `~/.adam/config.json`
@@ -171,11 +192,12 @@ adam/
 │   │   ├── orchestration/# Model routing
 │   │   ├── providers/    # LLM providers
 │   │   ├── runtime/      # gRPC client
+│   │   ├── security/     # Secure key storage
 │   │   ├── storage/      # Database + Vault
 │   │   └── tools/        # Tool implementations
 │   └── pyproject.toml
 ├── profiles/             # Security profiles
-└── docs/                 # Documentation
+└── container/            # Docker test environment
 ```
 
 ## Development
@@ -189,8 +211,15 @@ make build
 
 # Format code
 make fmt
+
+# Generate protobuf files
+make proto
 ```
 
 ## License
 
 MIT
+
+## Author
+
+Arbeey - [arbeey@proton.me](mailto:arbeey@proton.me)
