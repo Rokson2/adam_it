@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Adam Installation Script
-# One-line install: curl -fsSL https://get.adam.ai | bash
+# One-line install: curl -fsSL https://raw.githubusercontent.com/Rokson2/adam_it/main/install.sh | bash
 #
 
 set -e
@@ -20,18 +20,31 @@ case "$OS" in
     *)        echo -e "${RED}Unsupported OS: $OS${NC}"; exit 1 ;;
 esac
 
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ADAM_VENV="$HOME/.adam/venv"
+
 echo -e "${GREEN}Installing Adam on $OS...${NC}"
 
 # Check prerequisites
 check_prerequisites() {
     echo "Checking prerequisites..."
     
-    # Python
+    # Python 3
     if ! command -v python3 &> /dev/null; then
         echo -e "${RED}Python 3 is required. Please install it first.${NC}"
         exit 1
     fi
     echo -e "  ${GREEN}✓${NC} Python 3 found"
+    
+    # Python venv module
+    if ! python3 -m venv --help &> /dev/null; then
+        echo -e "${YELLOW}python3-venv not found. Installing...${NC}"
+        if [ "$OS" = "linux" ]; then
+            sudo apt update && sudo apt install -y python3-venv python3-pip
+        fi
+    fi
+    echo -e "  ${GREEN}✓${NC} Python venv available"
     
     # Go
     if ! command -v go &> /dev/null; then
@@ -40,6 +53,7 @@ check_prerequisites() {
             brew install go
         else
             echo -e "${YELLOW}Please install Go: https://go.dev/doc/install${NC}"
+            echo "  On Ubuntu/Debian: sudo apt install -y golang-go"
             exit 1
         fi
     fi
@@ -57,7 +71,7 @@ check_prerequisites() {
 # Install Go runtime
 install_go_runtime() {
     echo "Building Go runtime..."
-    cd go-runtime
+    cd "$SCRIPT_DIR/go-runtime"
     
     go mod tidy
     go build -o bin/adam-runtime ./cmd/adam-runtime
@@ -65,19 +79,40 @@ install_go_runtime() {
     # Symlink to /usr/local/bin
     sudo ln -sf "$(pwd)/bin/adam-runtime" /usr/local/bin/adam-runtime
     
-    cd ..
+    cd "$SCRIPT_DIR"
     echo -e "  ${GREEN}✓${NC} Go runtime installed"
 }
 
-# Install Python agent
+# Install Python agent in virtual environment
 install_python_agent() {
     echo "Installing Python agent..."
-    cd python-agent
     
+    # Create virtual environment
+    mkdir -p "$HOME/.adam"
+    
+    if [ ! -d "$ADAM_VENV" ]; then
+        echo "  Creating virtual environment..."
+        python3 -m venv "$ADAM_VENV"
+    fi
+    
+    # Activate and install
+    source "$ADAM_VENV/bin/activate"
+    
+    cd "$SCRIPT_DIR/python-agent"
+    pip install --upgrade pip --quiet
     pip install -e . --quiet
     
-    # Adam CLI is now available
-    cd ..
+    # Create wrapper script in /usr/local/bin
+    cat > /tmp/adam-wrapper << WRAPPER
+#!/bin/bash
+source $ADAM_VENV/bin/activate
+adam "\$@"
+WRAPPER
+    
+    sudo mv /tmp/adam-wrapper /usr/local/bin/adam
+    sudo chmod +x /usr/local/bin/adam
+    
+    cd "$SCRIPT_DIR"
     echo -e "  ${GREEN}✓${NC} Python agent installed"
 }
 
@@ -130,8 +165,8 @@ install_profiles() {
     ADAM_PROFILES="$HOME/.adam/profiles"
     mkdir -p "$ADAM_PROFILES"
     
-    if [ -d "profiles" ]; then
-        cp -r profiles/* "$ADAM_PROFILES/"
+    if [ -d "$SCRIPT_DIR/profiles" ]; then
+        cp -r "$SCRIPT_DIR/profiles/"* "$ADAM_PROFILES/"
         echo -e "  ${GREEN}✓${NC} Profiles installed"
     fi
 }
@@ -145,19 +180,17 @@ print_success() {
     echo ""
     echo "Next steps:"
     echo ""
-    echo "  1. Unlock the vault:"
-    echo "     ${GREEN}adam vault unlock${NC}"
-    echo ""
-    echo "  2. Add your API key:"
-    echo "     ${GREEN}adam vault add ANTHROPIC_API_KEY${NC}"
-    echo ""
-    echo "  3. Start the runtime (in one terminal):"
+    echo "  1. Start the runtime (in one terminal):"
     echo "     ${GREEN}adam-runtime${NC}"
     echo ""
-    echo "  4. Start chatting (in another terminal):"
-    echo "     ${GREEN}adam agent start${NC}"
+    echo "  2. Run Adam dashboard (in another terminal):"
+    echo "     ${GREEN}adam${NC}"
     echo ""
-    echo "Documentation: https://github.com/yourname/adam#readme"
+    echo "  The dashboard will guide you through:"
+    echo "  - Creating a vault passphrase"
+    echo "  - Adding your API key"
+    echo ""
+    echo "Documentation: https://github.com/Rokson2/adam_it#readme"
     echo ""
 }
 
