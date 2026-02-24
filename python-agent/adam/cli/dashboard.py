@@ -14,11 +14,50 @@ from adam.security import keystore
 
 console = Console()
 
+# Same providers as vault.py
 PROVIDERS = {
-    "anthropic": {"name": "Anthropic (Claude)", "key": "ANTHROPIC_API_KEY"},
-    "openai": {"name": "OpenAI (GPT-4)", "key": "OPENAI_API_KEY"},
-    "openrouter": {"name": "OpenRouter", "key": "OPENROUTER_API_KEY"},
-    "deepseek": {"name": "DeepSeek", "key": "DEEPSEEK_API_KEY"},
+    "anthropic": {
+        "key": "ANTHROPIC_API_KEY",
+        "name": "Anthropic (Claude)",
+        "description": "Claude 3.5 Sonnet, Haiku, Opus",
+        "url": "https://console.anthropic.com/",
+    },
+    "openai": {
+        "key": "OPENAI_API_KEY",
+        "name": "OpenAI (GPT-4)",
+        "description": "GPT-4, GPT-4 Turbo, GPT-3.5",
+        "url": "https://platform.openai.com/api-keys",
+    },
+    "openrouter": {
+        "key": "OPENROUTER_API_KEY",
+        "name": "OpenRouter",
+        "description": "Access to 100+ models",
+        "url": "https://openrouter.ai/keys",
+    },
+    "z-ai": {
+        "key": "ZAI_API_KEY",
+        "name": "z.ai (GLM)",
+        "description": "GLM-4, GLM-4 Plus models",
+        "url": "https://open.bigmodel.cn/",
+    },
+    "z-ai-coding": {
+        "key": "ZAI_CODING_API_KEY",
+        "name": "z.ai Coding (GLM)",
+        "description": "GLM coding-optimized models",
+        "url": "https://open.bigmodel.cn/",
+    },
+    "deepseek": {
+        "key": "DEEPSEEK_API_KEY",
+        "name": "DeepSeek",
+        "description": "DeepSeek Chat, Coder",
+        "url": "https://platform.deepseek.com/",
+    },
+    "ollama": {
+        "key": "OLLAMA_BASE_URL",
+        "name": "Ollama (Local)",
+        "description": "Run models locally",
+        "url": "http://localhost:11434",
+    },
 }
 
 
@@ -31,10 +70,12 @@ def get_status():
         vault.unlock(passphrase)
         load_keys_from_vault(vault)
     
+    configured = [info["name"] for p, info in PROVIDERS.items() if keystore.has(p)]
+    
     return {
         "vault_exists": vault.vault_exists,
         "vault_unlocked": vault.is_unlocked,
-        "providers": [info["name"] for p, info in PROVIDERS.items() if keystore.has(p)],
+        "providers": configured,
     }
 
 
@@ -147,27 +188,34 @@ def do_setup_api():
         console.print("[red]Unlock vault first[/red]")
         return
     
-    console.print("\n[cyan]Providers:[/cyan]")
-    for i, (pid, info) in enumerate(PROVIDERS.items(), 1):
-        status = "✓" if keystore.has(pid) else "○"
-        console.print(f"  {i}. {info['name']} {status}")
+    console.print("\n[cyan]Available Providers:[/cyan]\n")
     
-    choice = input("\nSelect (1-4): ").strip()
+    # Show all providers with status
+    for i, (pid, info) in enumerate(PROVIDERS.items(), 1):
+        status = "[green]✓[/green]" if keystore.has(pid) else "[dim]○[/dim]"
+        console.print(f"  {i}. {info['name']} - {info.get('description', '')} {status}")
+    
+    console.print()
+    choice = input("Select (1-7): ").strip()
+    
     try:
-        pid = list(PROVIDERS.keys())[int(choice) - 1]
-    except:
-        console.print("[red]Invalid[/red]")
+        idx = int(choice) - 1
+        pid = list(PROVIDERS.keys())[idx]
+    except (ValueError, IndexError):
+        console.print("[red]Invalid choice[/red]")
         return
     
     info = PROVIDERS[pid]
     console.print(f"\n[cyan]{info['name']}[/cyan]")
-    console.print(f"[dim]Get key: {info.get('url', '')}[/dim]")
+    console.print(f"[dim]{info.get('description', '')}[/dim]")
+    console.print(f"[dim]Get key: {info['url']}[/dim]")
     
-    key = input("Paste API key: ").strip()
+    key = input("\nPaste API key: ").strip()
     if key:
         vault.set(info["key"], key)
         keystore.set(pid, key)
-        console.print(f"[green]✓ Saved[/green]")
+        preview = key[:8] + "..." if len(key) > 8 else key
+        console.print(f"[green]✓ Saved ({preview})[/green]")
     else:
         console.print("[yellow]Skipped[/yellow]")
 
