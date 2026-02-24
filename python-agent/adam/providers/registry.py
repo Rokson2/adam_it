@@ -1,16 +1,11 @@
-"""
-Provider registry for managing LLM providers.
-Uses secure keystore for API keys - keys are NEVER exposed to:
-- LLM prompts
-- Tool execution  
-- Logs or debug output
-"""
+"""Provider registry for managing LLM providers."""
 
 from typing import Dict, Type, Optional, List
 from .base import BaseProvider, Message, CompletionResponse
 from .anthropic import AnthropicProvider
 from .openrouter import OpenRouterProvider
 from .ollama import OllamaProvider
+from .zai import ZaiProvider, ZaiCodingProvider
 from adam.security import keystore
 
 
@@ -22,6 +17,9 @@ class ProviderRegistry:
         "openrouter": OpenRouterProvider,
         "openai": OpenRouterProvider,  # OpenRouter can handle OpenAI models
         "ollama": OllamaProvider,
+        "z-ai": ZaiProvider,
+        "z-ai-coding": ZaiCodingProvider,
+        "deepseek": OpenRouterProvider,  # OpenRouter can handle DeepSeek
     }
 
     _instances: Dict[str, BaseProvider] = {}
@@ -33,24 +31,9 @@ class ProviderRegistry:
 
     @classmethod
     def get(cls, name: str, api_key: str = None, **kwargs) -> Optional[BaseProvider]:
-        """
-        Get or create a provider instance.
-        
-        API keys are retrieved from the secure keystore, NOT from parameters.
-        The api_key parameter is only used as a fallback for explicit overrides.
-        
-        Args:
-            name: Provider name
-            api_key: Optional explicit key (not recommended - use keystore)
-            **kwargs: Provider-specific configuration
-
-        Returns:
-            Provider instance or None if not found
-        """
+        """Get or create a provider instance."""
         provider_name = name.lower()
         
-        # Check if we need to create a new instance
-        # Cache key doesn't include API key (that's managed separately)
         cache_key = f"{provider_name}:{hash(frozenset(kwargs.items()))}"
 
         if cache_key not in cls._instances:
@@ -58,11 +41,7 @@ class ProviderRegistry:
             if not provider_class:
                 return None
             
-            # Get API key from secure keystore (preferred) or parameter (fallback)
-            # Key is retrieved securely and passed directly to provider
             resolved_key = api_key or keystore.get(provider_name)
-            
-            # Create provider - key is passed directly, never logged
             cls._instances[cache_key] = provider_class(api_key=resolved_key, **kwargs)
 
         return cls._instances[cache_key]
@@ -88,7 +67,7 @@ class ProviderRegistry:
 
     @classmethod
     def get_key_preview(cls, provider: str, chars: int = 4) -> Optional[str]:
-        """Get a preview of the configured key (for verification)."""
+        """Get a preview of the configured key."""
         return keystore.preview(provider, chars)
 
 
@@ -98,12 +77,7 @@ def get_provider(name: str, api_key: str = None, **kwargs) -> Optional[BaseProvi
 
 
 def load_keys_from_vault(vault) -> int:
-    """
-    Load all API keys from vault into secure keystore.
-    This should be called after vault is unlocked.
-    
-    Returns number of keys loaded.
-    """
+    """Load all API keys from vault into secure keystore."""
     key_mappings = {
         "ANTHROPIC_API_KEY": "anthropic",
         "OPENAI_API_KEY": "openai", 
