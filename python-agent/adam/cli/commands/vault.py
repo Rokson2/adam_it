@@ -36,6 +36,18 @@ API_PROVIDERS = {
         "description": "Access to 100+ models",
         "url": "https://openrouter.ai/keys",
     },
+    "z-ai": {
+        "key": "ZAI_API_KEY",
+        "name": "z.ai (GLM)",
+        "description": "GLM-4, GLM-4 Plus models",
+        "url": "https://open.bigmodel.cn/",
+    },
+    "z-ai-coding": {
+        "key": "ZAI_CODING_API_KEY",
+        "name": "z.ai Coding (GLM)",
+        "description": "GLM coding-optimized models",
+        "url": "https://open.bigmodel.cn/",
+    },
     "deepseek": {
         "key": "DEEPSEEK_API_KEY",
         "name": "DeepSeek",
@@ -222,7 +234,7 @@ def setup_api(
     Examples:
       adam vault setup-api                    # Interactive
       adam vault setup-api -p anthropic       # Select provider
-      adam vault setup-api -p anthropic -k sk-ant-xxx   # Non-interactive
+      adam vault setup-api -p z-ai-coding -k YOUR_KEY   # z.ai coding
     """
     vault = get_unlocked_vault()
     if not ensure_unlocked(vault):
@@ -233,18 +245,19 @@ def setup_api(
     t = Table()
     t.add_column("#")
     t.add_column("Provider")
+    t.add_column("Description")
     t.add_column("Status")
     
     plist = list(API_PROVIDERS.items())
     for i, (pid, info) in enumerate(plist, 1):
         status = "[green]✓[/green]" if keystore.has(pid) else "[dim]○[/dim]"
-        t.add_row(str(i), info["name"], status)
+        t.add_row(str(i), info["name"], info.get("description", ""), status)
     console.print(t)
     
     # Select provider
     if not provider:
         console.print()
-        choice = Prompt.ask("Select provider (1-5)", default="1")
+        choice = Prompt.ask("Select provider (1-7)", default="1")
         try:
             provider = plist[int(choice) - 1][0]
         except (ValueError, IndexError):
@@ -253,10 +266,12 @@ def setup_api(
     
     if provider not in API_PROVIDERS:
         console.print(f"[red]Unknown: {provider}[/red]")
+        console.print(f"[dim]Available: {', '.join(API_PROVIDERS.keys())}[/dim]")
         raise typer.Exit(1)
     
     info = API_PROVIDERS[provider]
     console.print(f"\n[cyan]{info['name']}[/cyan]")
+    console.print(f"[dim]{info.get('description', '')}[/dim]")
     console.print(f"[dim]Get key: {info['url']}[/dim]")
     
     # Get API key
