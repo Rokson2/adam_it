@@ -1,7 +1,8 @@
-"""Adam Dashboard - Interactive startup interface."""
+"""
+Adam Dashboard - Interactive startup interface.
+"""
 
 import os
-import sys
 import typer
 from rich.console import Console
 from rich.panel import Panel
@@ -14,63 +15,8 @@ from adam.security import keystore
 
 console = Console()
 
-# Same providers as vault.py
-PROVIDERS = {
-    "anthropic": {
-        "key": "ANTHROPIC_API_KEY",
-        "name": "Anthropic (Claude)",
-        "description": "Claude 3.5 Sonnet, Haiku, Opus",
-        "url": "https://console.anthropic.com/",
-    },
-    "openai": {
-        "key": "OPENAI_API_KEY",
-        "name": "OpenAI (GPT-4)",
-        "description": "GPT-4, GPT-4 Turbo, GPT-3.5",
-        "url": "https://platform.openai.com/api-keys",
-    },
-    "openrouter": {
-        "key": "OPENROUTER_API_KEY",
-        "name": "OpenRouter",
-        "description": "Access to 100+ models",
-        "url": "https://openrouter.ai/keys",
-    },
-    "z-ai": {
-        "key": "ZAI_API_KEY",
-        "name": "z.ai (GLM)",
-        "description": "GLM-4, GLM-4 Plus models",
-        "url": "https://open.bigmodel.cn/",
-    },
-    "z-ai-coding": {
-        "key": "ZAI_CODING_API_KEY",
-        "name": "z.ai Coding",
-        "description": "GLM coding-optimized models",
-        "url": "https://open.bigmodel.cn/",
-    },
-    "deepseek": {
-        "key": "DEEPSEEK_API_KEY",
-        "name": "DeepSeek",
-        "description": "DeepSeek Chat, Coder",
-        "url": "https://platform.deepseek.com/",
-    },
-    "ollama": {
-        "key": "OLLAMA_BASE_URL",
-        "name": "Ollama (Local)",
-        "description": "Run models locally",
-        "url": "http://localhost:11434",
-    },
-}
-
 # Provider priority for auto-detection
-PROVIDER_PRIORITY = ["z-ai-coding", "z-ai", "anthropic", "openai", "openrouter", "deepseek", "ollama"]
-
-
-def get_default_provider():
-    """Get first configured provider by priority."""
-    configured = keystore.list_providers()
-    for p in PROVIDER_PRIORITY:
-        if p in configured:
-            return p
-    return configured[0] if configured else None
+PROVIDER_PRIORITY = ["z-ai-coding", "z-ai", "anthropic", "openrouter", "ollama"]
 
 
 def get_status():
@@ -82,14 +28,12 @@ def get_status():
         vault.unlock(passphrase)
         load_keys_from_vault(vault)
     
-    configured = [info["name"] for p, info in PROVIDERS.items() if keystore.has(p)]
-    default = get_default_provider()
+    configured = [p for p in PROVIDER_PRIORITY if keystore.has(p)]
     
     return {
         "vault_exists": vault.vault_exists,
         "vault_unlocked": vault.is_unlocked,
         "providers": configured,
-        "default_provider": default,
     }
 
 
@@ -113,7 +57,7 @@ def print_dashboard():
     """Print status dashboard."""
     status = get_status()
     
-    # Status
+    # Status indicators
     if status["vault_unlocked"]:
         vstatus = "[green]✓ Unlocked[/green]"
     elif status["vault_exists"]:
@@ -121,19 +65,21 @@ def print_dashboard():
     else:
         vstatus = "[red]○ Not Created[/red]"
     
-    pstatus = f"[green]✓ {len(status['providers'])}[/green]" if status["providers"] else "[red]○ None[/red]"
-    dprovider = status.get("default_provider", "")
-    dname = PROVIDERS.get(dprovider, {}).get("name", dprovider) if dprovider else ""
+    if status["providers"]:
+        pstatus = f"[green]✓ {len(status['providers'])}[/green]"
+    else:
+        pstatus = "[red]○ None[/red]"
     
     console.print(Panel(
-        f"Vault: {vstatus}\nAPI Keys: {pstatus}\nDefault: {dname or 'none'}",
-        title="Status", expand=False
+        f"Vault: {vstatus}\nAPI Keys: {pstatus}",
+        title="Status",
+        expand=False
     ))
     
     # Checklist
-    t = Table(show_header=False)
-    t.add_column("Step")
-    t.add_column("Status")
+    t = Table(show_header=False, box=None)
+    t.add_column("Step", width=4)
+    t.add_column("Status", width=18)
     t.add_column("Action")
     
     if not status["vault_exists"]:
@@ -146,7 +92,7 @@ def print_dashboard():
     if not status["providers"]:
         t.add_row("[red]2.[/red]", "[red]Add API key[/red]", "adam vault setup-api")
     else:
-        t.add_row("[green]2.[/green]", "[green]API key set[/green]", ", ".join(status["providers"]))
+        t.add_row("[green]2.[/green]", "[green]API keys set[/green]", ", ".join(status["providers"]))
     
     if status["vault_unlocked"] and status["providers"]:
         t.add_row("[green]3.[/green]", "[green]Ready![/green]", "adam agent start")
@@ -162,7 +108,8 @@ def print_dashboard():
         "[cyan]3[/cyan]  Start chat\n"
         "[cyan]4[/cyan]  Status\n"
         "[cyan]q[/cyan]  Quit",
-        title="Menu", expand=False
+        title="Menu",
+        expand=False
     ))
     
     return status
@@ -176,6 +123,7 @@ def do_unlock():
         return True
     
     is_new = not vault.vault_exists
+    
     if is_new:
         console.print("\n[cyan]Create a passphrase:[/cyan]")
         p1 = input("New passphrase: ").strip()
@@ -208,26 +156,22 @@ def do_setup_api():
         return
     
     console.print("\n[cyan]Providers:[/cyan]")
-    for i, (pid, info) in enumerate(PROVIDERS.items(), 1):
-        status = "✓" if keystore.has(pid) else "○"
-        console.print(f"  {i}. {info['name']} - {info.get('description', '')} {status}")
+    for i, p in enumerate(PROVIDER_PRIORITY, 1):
+        has = "✓" if keystore.has(p) else "○"
+        console.print(f"  {i}. {p} {has}")
     
-    choice = input("\nSelect (1-7): ").strip()
+    choice = input("\nSelect (1-5): ").strip()
     try:
-        pid = list(PROVIDERS.keys())[int(choice) - 1]
+        provider = PROVIDER_PRIORITY[int(choice) - 1]
     except:
         console.print("[red]Invalid[/red]")
         return
     
-    info = PROVIDERS[pid]
-    console.print(f"\n[cyan]{info['name']}[/cyan]")
-    console.print(f"[dim]Get key: {info['url']}[/dim]")
-    
     key = input("Paste API key: ").strip()
     if key:
-        vault.set(info["key"], key)
-        keystore.set(pid, key)
-        console.print(f"[green]✓ Saved[/green]")
+        vault.set(f"{provider.upper()}_API_KEY", key)
+        keystore.set(provider, key)
+        console.print("[green]✓ Saved[/green]")
     else:
         console.print("[yellow]Skipped[/yellow]")
 
@@ -276,11 +220,7 @@ def run_dashboard():
         elif choice == "4":
             vault = get_vault()
             console.print(f"\nVault: {'unlocked' if vault.is_unlocked else 'locked'}")
-            console.print(f"Keys: {len(vault.list_keys()) if vault.is_unlocked else 0}")
             console.print(f"Providers: {', '.join(keystore.list_providers())}")
-            default_p = get_default_provider()
-            if default_p:
-                console.print(f"Default: {PROVIDERS.get(default_p, {}).get('name', default_p)}")
         elif choice.lower() == "q":
             console.print("\nBye!")
             raise typer.Exit()

@@ -1,98 +1,106 @@
-"""Provider registry for managing LLM providers."""
+"""
+Provider registry - simplified.
+
+Philosophy (inspired by NanoClaw):
+- No hardcoded model lists
+- Just map provider names to provider classes
+- Let providers/SDKs handle model validation
+"""
 
 from typing import Dict, Type, Optional, List
-from .base import BaseProvider, Message, CompletionResponse
-from .anthropic import AnthropicProvider
-from .openrouter import OpenRouterProvider
-from .ollama import OllamaProvider
-from .zai import ZaiProvider, ZaiCodingProvider
-from adam.security import keystore
+from .base import BaseProvider
 
+# Provider class registry
+PROVIDERS: Dict[str, Type[BaseProvider]] = {}
 
-class ProviderRegistry:
-    """Registry for LLM providers with secure key handling."""
-
-    _providers: Dict[str, Type[BaseProvider]] = {
-        "anthropic": AnthropicProvider,
-        "openrouter": OpenRouterProvider,
-        "openai": OpenRouterProvider,  # OpenRouter can handle OpenAI models
-        "ollama": OllamaProvider,
-        "z-ai": ZaiProvider,
-        "z-ai-coding": ZaiCodingProvider,
-        "deepseek": OpenRouterProvider,  # OpenRouter can handle DeepSeek
-    }
-
-    _instances: Dict[str, BaseProvider] = {}
-
-    @classmethod
-    def register(cls, name: str, provider_class: Type[BaseProvider]) -> None:
-        """Register a provider class."""
-        cls._providers[name] = provider_class
-
-    @classmethod
-    def get(cls, name: str, api_key: str = None, **kwargs) -> Optional[BaseProvider]:
-        """Get or create a provider instance."""
-        provider_name = name.lower()
-        
-        cache_key = f"{provider_name}:{hash(frozenset(kwargs.items()))}"
-
-        if cache_key not in cls._instances:
-            provider_class = cls._providers.get(provider_name)
-            if not provider_class:
-                return None
-            
-            resolved_key = api_key or keystore.get(provider_name)
-            cls._instances[cache_key] = provider_class(api_key=resolved_key, **kwargs)
-
-        return cls._instances[cache_key]
-
-    @classmethod
-    def list_available(cls) -> List[str]:
-        """List available provider names."""
-        return list(cls._providers.keys())
+# Lazy imports to avoid circular deps
+def _load_providers():
+    if PROVIDERS:
+        return
     
-    @classmethod
-    def list_configured(cls) -> List[str]:
-        """List providers that have API keys configured."""
-        configured = []
-        for provider in cls._providers:
-            if keystore.has(provider):
-                configured.append(provider)
-        return configured
+    from .anthropic import AnthropicProvider
+    from .zai import ZaiProvider, ZaiCodingProvider
+    from .openrouter import OpenRouterProvider
+    from .ollama import OllamaProvider
     
-    @classmethod
-    def clear_instances(cls) -> None:
-        """Clear all cached instances."""
-        cls._instances.clear()
-
-    @classmethod
-    def get_key_preview(cls, provider: str, chars: int = 4) -> Optional[str]:
-        """Get a preview of the configured key."""
-        return keystore.preview(provider, chars)
+    PROVIDERS["anthropic"] = AnthropicProvider
+    PROVIDERS["z-ai"] = ZaiProvider
+    PROVIDERS["z-ai-coding"] = ZaiCodingProvider
+    PROVIDERS["openrouter"] = OpenRouterProvider
+    PROVIDERS["openai"] = OpenRouterProvider  # OpenRouter handles OpenAI models
+    PROVIDERS["deepseek"] = OpenRouterProvider  # OpenRouter handles DeepSeek
+    PROVIDERS["ollama"] = OllamaProvider
 
 
 def get_provider(name: str, api_key: str = None, **kwargs) -> Optional[BaseProvider]:
-    """Convenience function to get a provider."""
-    return ProviderRegistry.get(name, api_key=api_key, **kwargs)
+    """
+    Get a provider instance.
+    
+    Args:
+        name: Provider name (e.g., "anthropic", "z-ai", "ollama")
+        api_key: API key for the provider
+        **kwargs: Additional provider-specific options
+    
+    Returns:
+        Provider instance or None if not found
+    """
+    _load_providers()
+    
+    provider_class = PROVIDERS.get(name.lower())
+    if not provider_class:
+        return None
+    
+    return provider_class(api_key=api_key, **kwargs)
+
+
+def list_providers() -> List[str]:
+    """List available provider names."""
+    _load_providers()
+    return list(PROVIDERS.keys())
 
 
 def load_keys_from_vault(vault) -> int:
-    """Load all API keys from vault into secure keystore."""
-    key_mappings = {
+    """
+    Load API keys from vault into keystore.
+    
+    Returns number of keys loaded.
+    """
+    from adam.security import keystore
+    
+    # Map vault key names to provider names
+    key_map = {
         "ANTHROPIC_API_KEY": "anthropic",
-        "OPENAI_API_KEY": "openai", 
+        "OPENAI_API_KEY": "openai",
         "OPENROUTER_API_KEY": "openrouter",
-        "DEEPSEEK_API_KEY": "deepseek",
         "ZAI_API_KEY": "z-ai",
         "ZAI_CODING_API_KEY": "z-ai-coding",
+        "DEEPSEEK_API_KEY": "deepseek",
         "OLLAMA_BASE_URL": "ollama",
     }
     
     loaded = 0
-    for vault_key, provider_name in key_mappings.items():
+    for vault_key, provider_name in key_map.items():
         value = vault.get(vault_key)
         if value:
             keystore.set(provider_name, value)
             loaded += 1
     
     return loaded
+
+
+# Backward compatibility
+class ProviderRegistry:
+    """Legacy registry class for backward compatibility."""
+    
+    @classmethod
+    def get(cls, name: str, api_key: str = None, **kwargs) -> Optional[BaseProvider]:
+        return get_provider(name, api_key, **kwargs)
+    
+    @classmethod
+    def list_available(cls) -> List[str]:
+        return list_providers()
+    
+    @classmethod
+    def list_configured(cls) -> List[str]:
+        from adam.security import keystore
+        return keystore.list_providers()

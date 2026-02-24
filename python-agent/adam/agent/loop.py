@@ -1,5 +1,7 @@
 """
-Agent loop for Adam.
+Agent loop for Adam - simplified.
+
+Uses providers that handle their own model selection.
 """
 
 import asyncio
@@ -7,233 +9,181 @@ from typing import List, Optional, Callable, Dict, Any
 from dataclasses import dataclass, field
 
 from ..providers import BaseProvider, Message, CompletionResponse, ToolCall, get_provider
-from ..tools import ToolRegistry, ToolResult
-from ..orchestration import ModelRouter, ExecutionMode
-from ..memory import AdamMemory, SessionMemory
+from ..tools import ToolRegistry
 from ..runtime import RuntimeClient
-from ..config import AdamConfig
+from ..orchestration import ExecutionMode
+from ..memory import SessionMemory
 
 
 class AgentError(Exception):
-    """Custom exception for agent errors."""
-    def __init__(self, message: str, original_error: str = None):
-        self.message = message
-        self.original_error = original_error or message
-        super().__init__(message)
-
-
-# Providers that use OpenAI tool format
-OPENAI_TOOL_FORMAT_PROVIDERS = {"z-ai", "z-ai-coding", "openai", "openrouter", "deepseek"}
-
-# Providers that use Anthropic tool format
-ANTHROPIC_TOOL_FORMAT_PROVIDERS = {"anthropic"}
+    """Agent error."""
+    pass
 
 
 @dataclass
 class LoopConfig:
-    """Configuration for agent loop behavior."""
-    model: str = "auto"
+    """Agent configuration."""
+    model: str = "auto"  # Let provider decide
     mode: ExecutionMode = ExecutionMode.AUTO_PILOT
     max_turns: int = 50
-    timeout_per_turn: int = 120
+    timeout: int = 120
     provider: str = "anthropic"
     system_prompt: str = ""
 
 
-@dataclass
+@dataclass 
 class AgentState:
-    """Mutable state during agent execution."""
+    """Agent state."""
     turns: int = 0
-    tool_calls_made: int = 0
+    tool_calls: int = 0
     last_model: str = ""
     errors: List[str] = field(default_factory=list)
 
 
 class AgentLoop:
-    """Main agent loop."""
+    """
+    Main agent loop.
+    
+    Simplified: providers handle model selection.
+    """
+    
+    DEFAULT_SYSTEM = """You are Adam, a helpful AI assistant.
 
-    DEFAULT_SYSTEM_PROMPT = """You are Adam, a personal AI assistant.
-
-You can help with:
-- Answering questions
-- Writing and editing code
-- Analyzing files and data
-- Running commands (with user permission)
-
-Be helpful, concise, and accurate. If you need more information, ask clarifying questions."""
-
+You can help with questions, coding, file operations, and running commands.
+Be helpful, concise, and accurate."""
+    
     def __init__(
         self,
         config: LoopConfig,
-        runtime_client: RuntimeClient,
-        memory: AdamMemory = None,
+        runtime_client: RuntimeClient = None,
         tool_registry: ToolRegistry = None,
-        model_router: ModelRouter = None,
     ):
         self.config = config
         self.runtime = runtime_client
-        self.memory = memory
-        self.session = SessionMemory()
         self.tools = tool_registry or ToolRegistry()
-        self.router = model_router or ModelRouter()
-        self._register_default_tools()
+        self.session = SessionMemory()
         self.state = AgentState()
         self._provider: Optional[BaseProvider] = None
-
-    def _register_default_tools(self):
-        """Register default tools."""
+        
+        # Register default tools if runtime available
+        if runtime_client:
+            self._register_tools()
+    
+    def _register_tools(self):
+        """Register available tools."""
         from ..tools.filesystem import FileReadTool, FileListTool
-        from ..tools.shell import ShellTool, PythonTool, WebFetchTool
-        from ..tools.memory import MemoryStoreTool, MemorySearchTool
-
+        from ..tools.shell import ShellTool
+        
         self.tools.register(FileReadTool(self.runtime))
         self.tools.register(FileListTool(self.runtime))
         self.tools.register(ShellTool(self.runtime))
-        self.tools.register(PythonTool(self.runtime))
-        self.tools.register(WebFetchTool(self.runtime))
-
-        if self.memory:
-            self.tools.register(MemoryStoreTool(self.memory))
-            self.tools.register(MemorySearchTool(self.memory))
-
+    
     def _get_provider(self) -> BaseProvider:
-        """Get or create LLM provider."""
+        """Get or create provider."""
         if self._provider is None:
-            self._provider = get_provider(self.config.provider)
+            from adam.security import keystore
+            
+            api_key = keystore.get(self.config.provider)
+            self._provider = get_provider(self.config.provider, api_key=api_key)
+            
             if not self._provider:
-                raise AgentError(f"Provider not available: {self.config.provider}")
-        return self._provider
-
-    def _get_tools_for_provider(self) -> List[Dict]:
-        """Get tools in the correct format for the current provider."""
-        provider = self.config.provider.lower()
+                raise AgentError(f"Unknown provider: {self.config.provider}")
         
-        if provider in OPENAI_TOOL_FORMAT_PROVIDERS:
-            return self.tools.get_openai_tools()
-        elif provider in ANTHROPIC_TOOL_FORMAT_PROVIDERS:
-            return self.tools.get_anthropic_tools()
-        else:
-            # Default to OpenAI format
-            return self.tools.get_openai_tools()
-
-    def _get_system_prompt(self) -> str:
-        return self.config.system_prompt or self.DEFAULT_SYSTEM_PROMPT
-
+        return self._provider
+    
     async def run(
         self,
         user_message: str,
         on_response: Callable[[str], None] = None,
-        on_tool_call: Callable[[str, dict], None] = None,
     ) -> str:
-        """Run the agent loop."""
+        """
+        Run agent with user message.
+        
+        Returns final response.
+        """
         self.session.add("user", user_message)
         self.state = AgentState()
-
+        
         while self.state.turns < self.config.max_turns:
             self.state.turns += 1
-
-            model, routing = self._select_model(user_message)
-            self.state.last_model = model
-
+            
+            provider = self._get_provider()
             messages = self._build_messages()
-            tools = self._get_tools_for_provider()
-
+            tools = self.tools.get_openai_tools()  # OpenAI format works for most
+            
             try:
-                provider = self._get_provider()
                 response = await provider.complete(
                     messages=messages,
-                    model=model,
+                    model=self.config.model,
                     tools=tools,
                 )
-            except AgentError:
-                raise
+                self.state.last_model = response.model
             except Exception as e:
-                error_msg = str(e)
-                self.state.errors.append(error_msg)
-                raise AgentError(f"API Error: {error_msg}", error_msg)
-
+                self.state.errors.append(str(e))
+                raise AgentError(str(e))
+            
+            # Handle response
             if response.content:
                 self.session.add("assistant", response.content)
                 if on_response:
                     on_response(response.content)
-
+            
+            # Handle tool calls
             if response.tool_calls:
-                for tool_call in response.tool_calls:
-                    self.state.tool_calls_made += 1
-
-                    if on_tool_call:
-                        on_tool_call(tool_call.name, tool_call.arguments)
-
-                    result = self.tools.execute(tool_call.name, tool_call.arguments)
-
-                    if result.success:
-                        tool_message = f"Tool '{tool_call.name}' result:\n{result.output}"
-                    else:
-                        tool_message = f"Tool '{tool_call.name}' error:\n{result.error}"
-
-                    self.session.add("user", tool_message)
-
-                continue
-
+                for tc in response.tool_calls:
+                    self.state.tool_calls += 1
+                    result = self.tools.execute(tc.name, tc.arguments)
+                    
+                    tool_msg = f"Tool {tc.name}: {result.output if result.success else result.error}"
+                    self.session.add("user", tool_msg)
+                
+                continue  # Loop for next turn
+            
             return response.content
-
+        
         return "Maximum turns reached."
-
-    def _select_model(self, task: str) -> tuple:
-        """Select model based on configuration."""
-        if self.config.model != "auto":
-            return self.config.model, None
-
-        from ..orchestration.router import RoutingDecision
-
-        decision = self.router.select_model(
-            task=task,
-            mode=self.config.mode,
-        )
-        return decision.model, decision
-
+    
     def _build_messages(self) -> List[Message]:
         """Build message list for LLM."""
         messages = []
-        messages.append(Message(role="system", content=self._get_system_prompt()))
-
+        
+        # System prompt
+        messages.append(Message(
+            role="system",
+            content=self.config.system_prompt or self.DEFAULT_SYSTEM
+        ))
+        
+        # Conversation history
         for msg in self.session.format_for_llm():
-            messages.append(Message(role=msg["role"], content=msg["content"]))
-
+            messages.append(Message(
+                role=msg["role"],
+                content=msg["content"]
+            ))
+        
         return messages
-
+    
     def clear_session(self):
-        """Clear session memory."""
+        """Clear session."""
         self.session.clear()
         self.state = AgentState()
-
+    
     def get_stats(self) -> Dict[str, Any]:
-        """Get agent statistics."""
+        """Get stats."""
         return {
             "turns": self.state.turns,
-            "tool_calls": self.state.tool_calls_made,
+            "tool_calls": self.state.tool_calls,
             "last_model": self.state.last_model,
-            "session_messages": len(self.session),
             "errors": self.state.errors,
         }
 
 
 async def run_agent(
-    message: str, config: AdamConfig = None, runtime_client: RuntimeClient = None, **kwargs
+    message: str,
+    provider: str = "anthropic",
+    model: str = "auto",
+    **kwargs
 ) -> str:
-    """Convenience function to run agent once."""
-    if runtime_client is None:
-        runtime_client = RuntimeClient()
-
-    loop_config = LoopConfig(
-        model=kwargs.get("model", "auto"),
-        mode=kwargs.get("mode", ExecutionMode.AUTO_PILOT),
-        provider=kwargs.get("provider", "anthropic"),
-    )
-
-    agent = AgentLoop(
-        config=loop_config,
-        runtime_client=runtime_client,
-    )
-
+    """Quick agent run."""
+    config = LoopConfig(provider=provider, model=model)
+    agent = AgentLoop(config=config)
     return await agent.run(message)

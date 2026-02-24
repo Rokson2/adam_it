@@ -1,21 +1,31 @@
 """
-Adam providers module - LLM provider abstractions.
+LLM Providers - simplified.
+
+Each provider handles its own model selection.
+Use "auto" for sensible defaults.
 """
 
-from .base import BaseProvider, Message, CompletionResponse, ToolCall
-from .registry import ProviderRegistry, get_provider
-from .anthropic import AnthropicProvider
-from .openrouter import OpenRouterProvider
-from .ollama import OllamaProvider
+from .base import (
+    BaseProvider,
+    Message,
+    CompletionResponse,
+    ToolCall,
+)
+
+from .registry import (
+    get_provider,
+    list_providers,
+    load_keys_from_vault,
+    ProviderRegistry,
+)
 
 __all__ = [
     "BaseProvider",
-    "Message",
+    "Message", 
     "CompletionResponse",
     "ToolCall",
-    "ProviderRegistry",
     "get_provider",
-    "AnthropicProvider",
-    "OpenRouterProvider",
-    "OllamaProvider",
+    "list_providers",
+    "load_keys_from_vault",
+    "ProviderRegistry",
 ]

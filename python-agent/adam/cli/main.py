@@ -24,8 +24,8 @@ console = Console()
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    version: bool = typer.Option(False, "--version", "-v", help="Show version and exit"),
-    no_dashboard: bool = typer.Option(False, "--no-dashboard", "-n", help="Skip dashboard, show help"),
+    version: bool = typer.Option(False, "--version", "-v", help="Show version"),
+    no_dashboard: bool = typer.Option(False, "--no-dashboard", "-n", help="Skip dashboard"),
 ):
     """Adam - Personal AI Assistant"""
     if version:
@@ -43,30 +43,29 @@ def main(
     run_dashboard()
 
 
-from . import agent, vault, profile, sync, cron, models
+from . import agent, vault, profile, sync, cron
 
 app.add_typer(agent.app, name="agent")
 app.add_typer(vault.app, name="vault")
 app.add_typer(profile.app, name="profile")
 app.add_typer(sync.app, name="sync")
 app.add_typer(cron.app, name="cron")
-app.add_typer(models.app, name="models")
 
 
 @app.command()
 def ask(
-    message: str = typer.Argument(..., help="Message to send to Adam"),
-    model: str = typer.Option("auto", "--model", "-m", help="Model to use"),
+    message: str = typer.Argument(..., help="Message to send"),
+    model: str = typer.Option("auto", "-m", help="Model (or 'auto')"),
+    provider: str = typer.Option(None, "-p", help="Provider (auto-detected)"),
 ):
-    """Send a single message to Adam (shortcut for 'adam agent ask')"""
+    """Send a message to Adam."""
     from .agent import ask as agent_ask
-
-    agent_ask(message, model)
+    agent_ask(message, model, provider)
 
 
 @app.command()
 def start():
-    """Start Adam dashboard (same as running 'adam' with no arguments)"""
+    """Start Adam dashboard."""
     from adam.cli.dashboard import run_dashboard
     run_dashboard()
 

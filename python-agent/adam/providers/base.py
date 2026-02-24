@@ -1,26 +1,21 @@
 """
-Base provider interface for LLM providers.
+Base provider interface - simplified.
+
+Philosophy (inspired by NanoClaw):
+- No hardcoded model lists
+- Delegate model selection to SDKs
+- "auto" = use provider's default
+- Let providers add new models without code changes
 """
 
 from abc import ABC, abstractmethod
-from typing import AsyncIterator, Dict, List, Any, Optional
-from dataclasses import dataclass, field
-
-
-@dataclass
-class Message:
-    """A chat message."""
-
-    role: str  # "system", "user", "assistant", "tool"
-    content: str
-    name: Optional[str] = None
-    tool_call_id: Optional[str] = None
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional, AsyncIterator
 
 
 @dataclass
 class ToolCall:
-    """A tool/function call from the LLM."""
-
+    """A tool call from the LLM."""
     id: str
     name: str
     arguments: Dict[str, Any]
@@ -29,61 +24,89 @@ class ToolCall:
 @dataclass
 class CompletionResponse:
     """Response from LLM completion."""
-
     content: str
-    tool_calls: List[ToolCall] = field(default_factory=list)
+    tool_calls: List[ToolCall]
     finish_reason: str = "stop"
-    usage: Dict[str, int] = field(default_factory=dict)
+    usage: Dict[str, int] = None
     model: str = ""
+    
+    def __post_init__(self):
+        if self.usage is None:
+            self.usage = {"input_tokens": 0, "output_tokens": 0}
+
+
+@dataclass
+class Message:
+    """A message in the conversation."""
+    role: str  # "system", "user", "assistant"
+    content: str
 
 
 class BaseProvider(ABC):
-    """Base class for LLM providers."""
-
+    """
+    Base class for LLM providers.
+    
+    Simple interface - just complete messages with optional tools.
+    Model selection is delegated to the provider/SDK.
+    """
+    
     name: str = "base"
-
+    default_model: str = "auto"
+    
     @abstractmethod
     async def complete(
         self,
         messages: List[Message],
-        model: str,
+        model: str = "auto",
         tools: List[Dict] = None,
-        **kwargs,
+        **kwargs
     ) -> CompletionResponse:
         """
-        Complete a chat conversation.
-
+        Complete a conversation.
+        
         Args:
-            messages: List of conversation messages
-            model: Model identifier
-            tools: Available tools in provider format
+            messages: List of messages in conversation
+            model: Model to use (or "auto" for provider default)
+            tools: Optional list of tools in provider's format
             **kwargs: Additional provider-specific options
-
+        
         Returns:
             CompletionResponse with content and optional tool calls
         """
         pass
-
-    @abstractmethod
+    
     async def stream(
         self,
         messages: List[Message],
-        model: str,
+        model: str = "auto",
         tools: List[Dict] = None,
-        **kwargs,
+        **kwargs
     ) -> AsyncIterator[str]:
         """
-        Stream a chat completion.
-
-        Yields:
-            Chunks of content as they're generated
+        Stream completion. Optional - default falls back to complete().
         """
-        pass
-
-    def format_messages_for_provider(self, messages: List[Message]) -> List[Dict]:
-        """Format messages for this provider's API."""
-        return [{"role": m.role, "content": m.content} for m in messages]
-
-    def format_tools_for_provider(self, tools: List[Dict]) -> List[Dict]:
-        """Format tools for this provider's API."""
-        return tools
+        response = await self.complete(messages, model, tools, **kwargs)
+        yield response.content
+    
+    def supports_tools(self) -> bool:
+        """Whether this provider supports tool calling."""
+        return True
+    
+    def supports_vision(self) -> bool:
+        """Whether this provider supports image input."""
+        return False
+    
+    def get_default_model(self) -> str:
+        """Get the default model for this provider."""
+        return self.default_model
+    
+    def resolve_model(self, model: str) -> str:
+        """
+        Resolve model name.
+        
+        - "auto" -> provider's default
+        - anything else -> pass through (let API validate)
+        """
+        if model in ("auto", ""):
+            return self.default_model
+        return model
