@@ -13,10 +13,30 @@ class ZaiProvider(BaseProvider):
     
     ZAI_API_BASE = "https://open.bigmodel.cn/api/paas/v4"
     
+    # Valid z.ai model names
+    VALID_MODELS = [
+        "glm-4",
+        "glm-4-plus",
+        "glm-4-air",
+        "glm-4-airx",
+        "glm-4-long",
+        "glm-4-flash",
+        "glm-4v",  # Vision model
+        "glm-3-turbo",
+    ]
+    
     def __init__(self, api_key: str = None, api_base: str = None, **kwargs):
         self.api_key = api_key
         self.api_base = api_base or self.ZAI_API_BASE
-        self.client = httpx.AsyncClient(timeout=120.0)
+        # Don't create client here - create fresh each request
+        self._client = None
+    
+    @property
+    def client(self):
+        """Lazy client creation."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=120.0)
+        return self._client
     
     def _get_headers(self) -> dict:
         return {
@@ -35,7 +55,7 @@ class ZaiProvider(BaseProvider):
         return formatted
     
     def _format_tools(self, tools: List[Dict]) -> List[Dict]:
-        """Format tools for z.ai API - requires type field."""
+        """Format tools for z.ai API."""
         if not tools:
             return []
         
@@ -53,6 +73,33 @@ class ZaiProvider(BaseProvider):
                 })
         return formatted_tools
     
+    def _resolve_model(self, model: str) -> str:
+        """Resolve model name to valid z.ai model."""
+        # Direct match
+        if model in self.VALID_MODELS:
+            return model
+        
+        # Map common names
+        model_map = {
+            "auto": "glm-4-flash",
+            "claude-3-haiku": "glm-4-flash",
+            "claude-3-sonnet": "glm-4-air",
+            "claude-3-opus": "glm-4-plus",
+            "gpt-4": "glm-4-plus",
+            "gpt-3.5-turbo": "glm-4-flash",
+        }
+        
+        resolved = model_map.get(model.lower())
+        if resolved:
+            return resolved
+        
+        # If contains glm, try to match
+        if "glm" in model.lower():
+            return model
+        
+        # Default fallback
+        return "glm-4-flash"
+    
     async def complete(
         self,
         messages: List[Message],
@@ -62,15 +109,7 @@ class ZaiProvider(BaseProvider):
     ) -> CompletionResponse:
         """Call z.ai API."""
         
-        model_map = {
-            "auto": "glm-4-flash",
-            "glm-4": "glm-4",
-            "glm-4-flash": "glm-4-flash",
-            "glm-4-plus": "glm-4-plus",
-            "glm-4-air": "glm-4-air",
-        }
-        
-        api_model = model_map.get(model, model)
+        api_model = self._resolve_model(model)
         
         payload = {
             "model": api_model,
@@ -78,24 +117,25 @@ class ZaiProvider(BaseProvider):
             "max_tokens": kwargs.get("max_tokens", 4096),
         }
         
-        # Only add tools if we have valid ones
         if tools:
             formatted_tools = self._format_tools(tools)
             if formatted_tools:
                 payload["tools"] = formatted_tools
         
         try:
-            response = await self.client.post(
-                f"{self.api_base}/chat/completions",
-                headers=self._get_headers(),
-                json=payload,
-            )
-            
-            if response.status_code != 200:
-                error_text = response.text
-                raise Exception(f"z.ai API error: {response.status_code} - {error_text}")
-            
-            data = response.json()
+            # Use fresh client for each request
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{self.api_base}/chat/completions",
+                    headers=self._get_headers(),
+                    json=payload,
+                )
+                
+                if response.status_code != 200:
+                    error_text = response.text
+                    raise Exception(f"z.ai API error: {response.status_code} - {error_text}")
+                
+                data = response.json()
             
             choice = data.get("choices", [{}])[0]
             message = choice.get("message", {})
@@ -131,7 +171,9 @@ class ZaiProvider(BaseProvider):
         except httpx.TimeoutException:
             raise Exception("z.ai API timeout")
         except Exception as e:
-            raise Exception(f"z.ai API error: {str(e)}")
+            if "z.ai" not in str(e):
+                raise Exception(f"z.ai API error: {str(e)}")
+            raise
     
     async def stream(
         self,
@@ -142,13 +184,7 @@ class ZaiProvider(BaseProvider):
     ) -> AsyncIterator[str]:
         """Stream response from z.ai API."""
         
-        model_map = {
-            "auto": "glm-4-flash",
-            "glm-4": "glm-4",
-            "glm-4-flash": "glm-4-flash",
-        }
-        
-        api_model = model_map.get(model, model)
+        api_model = self._resolve_model(model)
         
         payload = {
             "model": api_model,
@@ -157,44 +193,40 @@ class ZaiProvider(BaseProvider):
             "stream": True,
         }
         
-        async with self.client.stream(
-            "POST",
-            f"{self.api_base}/chat/completions",
-            headers=self._get_headers(),
-            json=payload,
-        ) as response:
-            if response.status_code != 200:
-                raise Exception(f"z.ai API error: {response.status_code}")
-            
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        if "content" in delta:
-                            yield delta["content"]
-                    except:
-                        pass
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            async with client.stream(
+                "POST",
+                f"{self.api_base}/chat/completions",
+                headers=self._get_headers(),
+                json=payload,
+            ) as response:
+                if response.status_code != 200:
+                    raise Exception(f"z.ai API error: {response.status_code}")
+                
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
+                            if "content" in delta:
+                                yield delta["content"]
+                        except:
+                            pass
 
 
 class ZaiCodingProvider(ZaiProvider):
-    """z.ai Coding provider - same API, optimized for coding."""
+    """z.ai Coding provider."""
     
     name = "z-ai-coding"
     
     def __init__(self, api_key: str = None, **kwargs):
         super().__init__(api_key=api_key, **kwargs)
     
-    async def complete(
-        self,
-        messages: List[Message],
-        model: str,
-        tools: List[Dict] = None,
-        **kwargs,
-    ) -> CompletionResponse:
+    def _resolve_model(self, model: str) -> str:
+        """Resolve model for coding - prefer coding-optimized models."""
         if model == "auto":
-            model = "glm-4-flash"
-        return await super().complete(messages, model, tools, **kwargs)
+            return "glm-4-flash"  # Fast model for coding
+        return super()._resolve_model(model)
