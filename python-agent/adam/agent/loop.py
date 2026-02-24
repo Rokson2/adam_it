@@ -1,22 +1,14 @@
 """
 Agent loop for Adam.
-
-The core execution loop that connects:
-- LLM providers (via ModelRouter)
-- Tools (via ToolRegistry)
-- Memory (via AdamMemory/SessionMemory)
-- Runtime (via RuntimeClient)
 """
 
 import asyncio
-import uuid
 from typing import List, Optional, Callable, Dict, Any
 from dataclasses import dataclass, field
 
 from ..providers import BaseProvider, Message, CompletionResponse, ToolCall, get_provider
 from ..tools import ToolRegistry, ToolResult
 from ..orchestration import ModelRouter, ExecutionMode
-from ..orchestration.estimator import ComplexityTier
 from ..memory import AdamMemory, SessionMemory
 from ..runtime import RuntimeClient
 from ..config import AdamConfig
@@ -30,10 +22,16 @@ class AgentError(Exception):
         super().__init__(message)
 
 
+# Providers that use OpenAI tool format
+OPENAI_TOOL_FORMAT_PROVIDERS = {"z-ai", "z-ai-coding", "openai", "openrouter", "deepseek"}
+
+# Providers that use Anthropic tool format
+ANTHROPIC_TOOL_FORMAT_PROVIDERS = {"anthropic"}
+
+
 @dataclass
 class LoopConfig:
     """Configuration for agent loop behavior."""
-
     model: str = "auto"
     mode: ExecutionMode = ExecutionMode.AUTO_PILOT
     max_turns: int = 50
@@ -45,7 +43,6 @@ class LoopConfig:
 @dataclass
 class AgentState:
     """Mutable state during agent execution."""
-
     turns: int = 0
     tool_calls_made: int = 0
     last_model: str = ""
@@ -53,27 +50,17 @@ class AgentState:
 
 
 class AgentLoop:
-    """
-    Main agent loop implementing the LLM ↔ Tool execution cycle.
+    """Main agent loop."""
 
-    Flow:
-    1. Receive user message
-    2. Route to appropriate model
-    3. Call LLM with tools available
-    4. Execute any tool calls
-    5. Loop until no more tool calls
-    6. Return response
-    """
+    DEFAULT_SYSTEM_PROMPT = """You are Adam, a personal AI assistant.
 
-    DEFAULT_SYSTEM_PROMPT = """You are Adam, a personal AI assistant with secure access to the user's local files and the ability to execute commands.
+You can help with:
+- Answering questions
+- Writing and editing code
+- Analyzing files and data
+- Running commands (with user permission)
 
-You have access to the following capabilities:
-- File operations: Read, write, list, and delete files in allowed directories
-- Shell execution: Run commands in a sandboxed environment
-- Memory: Store and retrieve information for future reference
-- Web access: Fetch content from URLs
-
-Always be helpful, concise, and security-conscious. Never attempt to access files outside allowed directories. When in doubt, ask for clarification."""
+Be helpful, concise, and accurate. If you need more information, ask clarifying questions."""
 
     def __init__(
         self,
@@ -83,39 +70,24 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
         tool_registry: ToolRegistry = None,
         model_router: ModelRouter = None,
     ):
-        """
-        Initialize agent loop.
-
-        Args:
-            config: Agent loop configuration
-            runtime_client: Client for runtime services
-            memory: Long-term memory system
-            tool_registry: Registry of available tools
-            model_router: Model selection router
-        """
         self.config = config
         self.runtime = runtime_client
         self.memory = memory
         self.session = SessionMemory()
-
         self.tools = tool_registry or ToolRegistry()
         self.router = model_router or ModelRouter()
-
         self._register_default_tools()
-
         self.state = AgentState()
-
         self._provider: Optional[BaseProvider] = None
 
     def _register_default_tools(self):
         """Register default tools."""
-        from ..tools.filesystem import FileReadTool, FileWriteTool, FileListTool
+        from ..tools.filesystem import FileReadTool, FileListTool
         from ..tools.shell import ShellTool, PythonTool, WebFetchTool
         from ..tools.memory import MemoryStoreTool, MemorySearchTool
 
         self.tools.register(FileReadTool(self.runtime))
         self.tools.register(FileListTool(self.runtime))
-
         self.tools.register(ShellTool(self.runtime))
         self.tools.register(PythonTool(self.runtime))
         self.tools.register(WebFetchTool(self.runtime))
@@ -132,8 +104,19 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
                 raise AgentError(f"Provider not available: {self.config.provider}")
         return self._provider
 
+    def _get_tools_for_provider(self) -> List[Dict]:
+        """Get tools in the correct format for the current provider."""
+        provider = self.config.provider.lower()
+        
+        if provider in OPENAI_TOOL_FORMAT_PROVIDERS:
+            return self.tools.get_openai_tools()
+        elif provider in ANTHROPIC_TOOL_FORMAT_PROVIDERS:
+            return self.tools.get_anthropic_tools()
+        else:
+            # Default to OpenAI format
+            return self.tools.get_openai_tools()
+
     def _get_system_prompt(self) -> str:
-        """Get system prompt."""
         return self.config.system_prompt or self.DEFAULT_SYSTEM_PROMPT
 
     async def run(
@@ -142,22 +125,8 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
         on_response: Callable[[str], None] = None,
         on_tool_call: Callable[[str, dict], None] = None,
     ) -> str:
-        """
-        Run the agent loop with a user message.
-
-        Args:
-            user_message: User's input message
-            on_response: Callback for response chunks (for streaming)
-            on_tool_call: Callback when tools are called
-
-        Returns:
-            Final response string
-
-        Raises:
-            AgentError: When an API or execution error occurs
-        """
+        """Run the agent loop."""
         self.session.add("user", user_message)
-
         self.state = AgentState()
 
         while self.state.turns < self.config.max_turns:
@@ -167,16 +136,17 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
             self.state.last_model = model
 
             messages = self._build_messages()
+            tools = self._get_tools_for_provider()
 
             try:
                 provider = self._get_provider()
                 response = await provider.complete(
                     messages=messages,
                     model=model,
-                    tools=self.tools.get_anthropic_tools(),
+                    tools=tools,
                 )
             except AgentError:
-                raise  # Re-raise our custom errors
+                raise
             except Exception as e:
                 error_msg = str(e)
                 self.state.errors.append(error_msg)
@@ -207,7 +177,7 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
 
             return response.content
 
-        return "I reached the maximum number of turns. Please try a simpler request."
+        return "Maximum turns reached."
 
     def _select_model(self, task: str) -> tuple:
         """Select model based on configuration."""
@@ -225,7 +195,6 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
     def _build_messages(self) -> List[Message]:
         """Build message list for LLM."""
         messages = []
-
         messages.append(Message(role="system", content=self._get_system_prompt()))
 
         for msg in self.session.format_for_llm():
@@ -252,18 +221,7 @@ Always be helpful, concise, and security-conscious. Never attempt to access file
 async def run_agent(
     message: str, config: AdamConfig = None, runtime_client: RuntimeClient = None, **kwargs
 ) -> str:
-    """
-    Convenience function to run agent once.
-
-    Args:
-        message: User message
-        config: Adam configuration
-        runtime_client: Runtime client
-        **kwargs: Additional agent config options
-
-    Returns:
-        Agent response
-    """
+    """Convenience function to run agent once."""
     if runtime_client is None:
         runtime_client = RuntimeClient()
 

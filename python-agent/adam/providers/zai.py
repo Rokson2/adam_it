@@ -1,6 +1,7 @@
 """z.ai (GLM) provider - OpenAI-compatible API."""
 
 import httpx
+import json
 from typing import List, Dict, AsyncIterator, Optional
 from .base import BaseProvider, Message, CompletionResponse, ToolCall
 
@@ -10,7 +11,6 @@ class ZaiProvider(BaseProvider):
     
     name = "z-ai"
     
-    # API endpoints
     ZAI_API_BASE = "https://open.bigmodel.cn/api/paas/v4"
     
     def __init__(self, api_key: str = None, api_base: str = None, **kwargs):
@@ -35,8 +35,23 @@ class ZaiProvider(BaseProvider):
         return formatted
     
     def _format_tools(self, tools: List[Dict]) -> List[Dict]:
-        """Format tools for z.ai API (OpenAI format)."""
-        return tools or []
+        """Format tools for z.ai API - requires type field."""
+        if not tools:
+            return []
+        
+        formatted_tools = []
+        for tool in tools:
+            if tool.get("type") == "function":
+                func = tool.get("function", {})
+                formatted_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "parameters": func.get("parameters", {}),
+                    }
+                })
+        return formatted_tools
     
     async def complete(
         self,
@@ -47,14 +62,12 @@ class ZaiProvider(BaseProvider):
     ) -> CompletionResponse:
         """Call z.ai API."""
         
-        # Map model names
         model_map = {
-            "auto": "glm-4-flash",  # Default fast model
+            "auto": "glm-4-flash",
             "glm-4": "glm-4",
             "glm-4-flash": "glm-4-flash",
             "glm-4-plus": "glm-4-plus",
             "glm-4-air": "glm-4-air",
-            "glm-4-long": "glm-4-long",
         }
         
         api_model = model_map.get(model, model)
@@ -65,48 +78,60 @@ class ZaiProvider(BaseProvider):
             "max_tokens": kwargs.get("max_tokens", 4096),
         }
         
+        # Only add tools if we have valid ones
         if tools:
-            payload["tools"] = self._format_tools(tools)
+            formatted_tools = self._format_tools(tools)
+            if formatted_tools:
+                payload["tools"] = formatted_tools
         
-        response = await self.client.post(
-            f"{self.api_base}/chat/completions",
-            headers=self._get_headers(),
-            json=payload,
-        )
-        
-        if response.status_code != 200:
-            raise Exception(f"z.ai API error: {response.status_code} - {response.text}")
-        
-        data = response.json()
-        
-        # Parse response
-        choice = data.get("choices", [{}])[0]
-        message = choice.get("message", {})
-        content = message.get("content", "")
-        
-        # Parse tool calls if present
-        tool_calls = []
-        if "tool_calls" in message:
-            for tc in message["tool_calls"]:
-                tool_calls.append(ToolCall(
-                    id=tc.get("id", ""),
-                    name=tc.get("function", {}).get("name", ""),
-                    arguments=tc.get("function", {}).get("arguments", {}),
-                ))
-        
-        # Get usage
-        usage = data.get("usage", {})
-        
-        return CompletionResponse(
-            content=content,
-            tool_calls=tool_calls,
-            finish_reason=choice.get("finish_reason", "stop"),
-            usage={
-                "input_tokens": usage.get("prompt_tokens", 0),
-                "output_tokens": usage.get("completion_tokens", 0),
-            },
-            model=api_model,
-        )
+        try:
+            response = await self.client.post(
+                f"{self.api_base}/chat/completions",
+                headers=self._get_headers(),
+                json=payload,
+            )
+            
+            if response.status_code != 200:
+                error_text = response.text
+                raise Exception(f"z.ai API error: {response.status_code} - {error_text}")
+            
+            data = response.json()
+            
+            choice = data.get("choices", [{}])[0]
+            message = choice.get("message", {})
+            content = message.get("content", "")
+            
+            tool_calls = []
+            if "tool_calls" in message:
+                for tc in message["tool_calls"]:
+                    args = tc.get("function", {}).get("arguments", "{}")
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except:
+                            args = {}
+                    tool_calls.append(ToolCall(
+                        id=tc.get("id", ""),
+                        name=tc.get("function", {}).get("name", ""),
+                        arguments=args,
+                    ))
+            
+            usage = data.get("usage", {})
+            
+            return CompletionResponse(
+                content=content,
+                tool_calls=tool_calls,
+                finish_reason=choice.get("finish_reason", "stop"),
+                usage={
+                    "input_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0),
+                },
+                model=api_model,
+            )
+        except httpx.TimeoutException:
+            raise Exception("z.ai API timeout")
+        except Exception as e:
+            raise Exception(f"z.ai API error: {str(e)}")
     
     async def stream(
         self,
@@ -121,7 +146,6 @@ class ZaiProvider(BaseProvider):
             "auto": "glm-4-flash",
             "glm-4": "glm-4",
             "glm-4-flash": "glm-4-flash",
-            "glm-4-plus": "glm-4-plus",
         }
         
         api_model = model_map.get(model, model)
@@ -148,7 +172,6 @@ class ZaiProvider(BaseProvider):
                     if data == "[DONE]":
                         break
                     try:
-                        import json
                         chunk = json.loads(data)
                         delta = chunk.get("choices", [{}])[0].get("delta", {})
                         if "content" in delta:
@@ -158,7 +181,7 @@ class ZaiProvider(BaseProvider):
 
 
 class ZaiCodingProvider(ZaiProvider):
-    """z.ai Coding provider - same API, different key for coding models."""
+    """z.ai Coding provider - same API, optimized for coding."""
     
     name = "z-ai-coding"
     
@@ -172,7 +195,6 @@ class ZaiCodingProvider(ZaiProvider):
         tools: List[Dict] = None,
         **kwargs,
     ) -> CompletionResponse:
-        # Use coding-optimized model by default
         if model == "auto":
             model = "glm-4-flash"
         return await super().complete(messages, model, tools, **kwargs)
