@@ -42,7 +42,7 @@ PROVIDERS = {
     },
     "z-ai-coding": {
         "key": "ZAI_CODING_API_KEY",
-        "name": "z.ai Coding (GLM)",
+        "name": "z.ai Coding",
         "description": "GLM coding-optimized models",
         "url": "https://open.bigmodel.cn/",
     },
@@ -60,6 +60,18 @@ PROVIDERS = {
     },
 }
 
+# Provider priority for auto-detection
+PROVIDER_PRIORITY = ["z-ai-coding", "z-ai", "anthropic", "openai", "openrouter", "deepseek", "ollama"]
+
+
+def get_default_provider():
+    """Get first configured provider by priority."""
+    configured = keystore.list_providers()
+    for p in PROVIDER_PRIORITY:
+        if p in configured:
+            return p
+    return configured[0] if configured else None
+
 
 def get_status():
     """Get current status."""
@@ -71,11 +83,13 @@ def get_status():
         load_keys_from_vault(vault)
     
     configured = [info["name"] for p, info in PROVIDERS.items() if keystore.has(p)]
+    default = get_default_provider()
     
     return {
         "vault_exists": vault.vault_exists,
         "vault_unlocked": vault.is_unlocked,
         "providers": configured,
+        "default_provider": default,
     }
 
 
@@ -108,8 +122,13 @@ def print_dashboard():
         vstatus = "[red]○ Not Created[/red]"
     
     pstatus = f"[green]✓ {len(status['providers'])}[/green]" if status["providers"] else "[red]○ None[/red]"
+    dprovider = status.get("default_provider", "")
+    dname = PROVIDERS.get(dprovider, {}).get("name", dprovider) if dprovider else ""
     
-    console.print(Panel(f"Vault: {vstatus}\nAPI Keys: {pstatus}", title="Status", expand=False))
+    console.print(Panel(
+        f"Vault: {vstatus}\nAPI Keys: {pstatus}\nDefault: {dname or 'none'}",
+        title="Status", expand=False
+    ))
     
     # Checklist
     t = Table(show_header=False)
@@ -188,34 +207,27 @@ def do_setup_api():
         console.print("[red]Unlock vault first[/red]")
         return
     
-    console.print("\n[cyan]Available Providers:[/cyan]\n")
-    
-    # Show all providers with status
+    console.print("\n[cyan]Providers:[/cyan]")
     for i, (pid, info) in enumerate(PROVIDERS.items(), 1):
-        status = "[green]✓[/green]" if keystore.has(pid) else "[dim]○[/dim]"
+        status = "✓" if keystore.has(pid) else "○"
         console.print(f"  {i}. {info['name']} - {info.get('description', '')} {status}")
     
-    console.print()
-    choice = input("Select (1-7): ").strip()
-    
+    choice = input("\nSelect (1-7): ").strip()
     try:
-        idx = int(choice) - 1
-        pid = list(PROVIDERS.keys())[idx]
-    except (ValueError, IndexError):
-        console.print("[red]Invalid choice[/red]")
+        pid = list(PROVIDERS.keys())[int(choice) - 1]
+    except:
+        console.print("[red]Invalid[/red]")
         return
     
     info = PROVIDERS[pid]
     console.print(f"\n[cyan]{info['name']}[/cyan]")
-    console.print(f"[dim]{info.get('description', '')}[/dim]")
     console.print(f"[dim]Get key: {info['url']}[/dim]")
     
-    key = input("\nPaste API key: ").strip()
+    key = input("Paste API key: ").strip()
     if key:
         vault.set(info["key"], key)
         keystore.set(pid, key)
-        preview = key[:8] + "..." if len(key) > 8 else key
-        console.print(f"[green]✓ Saved ({preview})[/green]")
+        console.print(f"[green]✓ Saved[/green]")
     else:
         console.print("[yellow]Skipped[/yellow]")
 
@@ -266,6 +278,9 @@ def run_dashboard():
             console.print(f"\nVault: {'unlocked' if vault.is_unlocked else 'locked'}")
             console.print(f"Keys: {len(vault.list_keys()) if vault.is_unlocked else 0}")
             console.print(f"Providers: {', '.join(keystore.list_providers())}")
+            default_p = get_default_provider()
+            if default_p:
+                console.print(f"Default: {PROVIDERS.get(default_p, {}).get('name', default_p)}")
         elif choice.lower() == "q":
             console.print("\nBye!")
             raise typer.Exit()
