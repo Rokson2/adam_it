@@ -16,7 +16,7 @@ app = typer.Typer(
     name="adam",
     help="Adam - Your Personal AI Assistant",
     add_completion=True,
-    no_args_is_help=False,  # We handle this ourselves
+    no_args_is_help=False,
 )
 console = Console()
 
@@ -32,27 +32,25 @@ def main(
         console.print(f"Adam v{__version__}")
         raise typer.Exit()
     
-    # If a subcommand is being invoked, let it handle things
     if ctx.invoked_subcommand is not None:
         return
     
-    # If --no-dashboard or ADAM_NO_DASHBOARD is set, show help instead
     if no_dashboard or os.environ.get("ADAM_NO_DASHBOARD"):
         console.print(ctx.get_help())
         return
     
-    # Show interactive dashboard
     from adam.cli.dashboard import run_dashboard
     run_dashboard()
 
 
-from . import agent, vault, profile, sync, cron
+from . import agent, vault, profile, sync, cron, models
 
 app.add_typer(agent.app, name="agent")
 app.add_typer(vault.app, name="vault")
 app.add_typer(profile.app, name="profile")
 app.add_typer(sync.app, name="sync")
 app.add_typer(cron.app, name="cron")
+app.add_typer(models.app, name="models")
 
 
 @app.command()

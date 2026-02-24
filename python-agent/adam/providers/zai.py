@@ -1,4 +1,12 @@
-"""z.ai (GLM) provider - OpenAI-compatible API."""
+"""z.ai (GLM) provider - OpenAI-compatible API.
+
+Latest models (as of 2025):
+- GLM-5 series: Latest generation
+- GLM-4.7 series: Improved 4.x generation  
+- GLM-4 series: Stable production models
+
+See: https://open.bigmodel.cn/dev/api#models
+"""
 
 import httpx
 import json
@@ -13,30 +21,45 @@ class ZaiProvider(BaseProvider):
     
     ZAI_API_BASE = "https://open.bigmodel.cn/api/paas/v4"
     
-    # Valid z.ai model names
-    VALID_MODELS = [
-        "glm-4",
-        "glm-4-plus",
-        "glm-4-air",
-        "glm-4-airx",
-        "glm-4-long",
-        "glm-4-flash",
-        "glm-4v",  # Vision model
-        "glm-3-turbo",
-    ]
+    # Current z.ai/GLM models (updated 2025)
+    # See: https://open.bigmodel.cn/dev/api#models
+    VALID_MODELS = {
+        # GLM-5 series (latest)
+        "glm-5": "GLM-5 - Latest generation flagship model",
+        "glm-5-plus": "GLM-5 Plus - Enhanced capabilities",
+        "glm-5-flash": "GLM-5 Flash - Fast responses",
+        
+        # GLM-4.7 series
+        "glm-4.7": "GLM-4.7 - Improved 4.x generation",
+        "glm-4.7-plus": "GLM-4.7 Plus - Enhanced 4.7",
+        "glm-4.7-flash": "GLM-4.7 Flash - Fast 4.7",
+        
+        # GLM-4 series (stable)
+        "glm-4": "GLM-4 - Standard model",
+        "glm-4-plus": "GLM-4 Plus - Best 4.x quality",
+        "glm-4-air": "GLM-4 Air - Balanced speed/quality",
+        "glm-4-airx": "GLM-4 AirX - Extended context",
+        "glm-4-long": "GLM-4 Long - Long context (128K)",
+        "glm-4-flash": "GLM-4 Flash - Fastest 4.x",
+        "glm-4-flashx": "GLM-4 FlashX - Extended flash",
+        
+        # Vision
+        "glm-4v": "GLM-4V - Vision model",
+        "glm-4v-plus": "GLM-4V Plus - Enhanced vision",
+        
+        # Legacy
+        "glm-3-turbo": "GLM-3 Turbo - Legacy fast model",
+    }
+    
+    # Default model mappings
+    DEFAULT_MODEL = "glm-4-flash"
+    DEFAULT_MODEL_QUICK = "glm-4-flash"
+    DEFAULT_MODEL_STANDARD = "glm-4-air"
+    DEFAULT_MODEL_DEEP = "glm-4-plus"
     
     def __init__(self, api_key: str = None, api_base: str = None, **kwargs):
         self.api_key = api_key
         self.api_base = api_base or self.ZAI_API_BASE
-        # Don't create client here - create fresh each request
-        self._client = None
-    
-    @property
-    def client(self):
-        """Lazy client creation."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=120.0)
-        return self._client
     
     def _get_headers(self) -> dict:
         return {
@@ -79,9 +102,13 @@ class ZaiProvider(BaseProvider):
         if model in self.VALID_MODELS:
             return model
         
-        # Map common names
+        # Map generic names to current best options
         model_map = {
-            "auto": "glm-4-flash",
+            "auto": self.DEFAULT_MODEL,
+            "quick": self.DEFAULT_MODEL_QUICK,
+            "standard": self.DEFAULT_MODEL_STANDARD,
+            "deep": self.DEFAULT_MODEL_DEEP,
+            # Map competitor names
             "claude-3-haiku": "glm-4-flash",
             "claude-3-sonnet": "glm-4-air",
             "claude-3-opus": "glm-4-plus",
@@ -93,12 +120,12 @@ class ZaiProvider(BaseProvider):
         if resolved:
             return resolved
         
-        # If contains glm, try to match
+        # If contains glm, try it directly
         if "glm" in model.lower():
             return model
         
         # Default fallback
-        return "glm-4-flash"
+        return self.DEFAULT_MODEL
     
     async def complete(
         self,
@@ -123,7 +150,6 @@ class ZaiProvider(BaseProvider):
                 payload["tools"] = formatted_tools
         
         try:
-            # Use fresh client for each request
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
                     f"{self.api_base}/chat/completions",
@@ -133,7 +159,7 @@ class ZaiProvider(BaseProvider):
                 
                 if response.status_code != 200:
                     error_text = response.text
-                    raise Exception(f"z.ai API error: {response.status_code} - {error_text}")
+                    raise Exception(f"{response.status_code} - {error_text}")
                 
                 data = response.json()
             
@@ -169,10 +195,8 @@ class ZaiProvider(BaseProvider):
                 model=api_model,
             )
         except httpx.TimeoutException:
-            raise Exception("z.ai API timeout")
+            raise Exception("API timeout")
         except Exception as e:
-            if "z.ai" not in str(e):
-                raise Exception(f"z.ai API error: {str(e)}")
             raise
     
     async def stream(
@@ -201,7 +225,7 @@ class ZaiProvider(BaseProvider):
                 json=payload,
             ) as response:
                 if response.status_code != 200:
-                    raise Exception(f"z.ai API error: {response.status_code}")
+                    raise Exception(f"API error: {response.status_code}")
                 
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
@@ -218,15 +242,19 @@ class ZaiProvider(BaseProvider):
 
 
 class ZaiCodingProvider(ZaiProvider):
-    """z.ai Coding provider."""
+    """z.ai Coding provider - optimized for code tasks."""
     
     name = "z-ai-coding"
+    
+    # Coding-optimized defaults
+    DEFAULT_MODEL = "glm-4-flash"  # Fast for coding iterations
+    DEFAULT_MODEL_DEEP = "glm-4-plus"  # Deep thinking for complex code
     
     def __init__(self, api_key: str = None, **kwargs):
         super().__init__(api_key=api_key, **kwargs)
     
     def _resolve_model(self, model: str) -> str:
-        """Resolve model for coding - prefer coding-optimized models."""
+        """Resolve model for coding tasks."""
         if model == "auto":
-            return "glm-4-flash"  # Fast model for coding
+            return self.DEFAULT_MODEL
         return super()._resolve_model(model)
