@@ -7,9 +7,12 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.text import Text
+from rich.layout import Layout
+from rich.align import Align
+from rich import box
 
 from adam.storage.vault import Vault, VaultLockedError, get_vault
-from adam.providers.registry import load_keys_from_vault, ProviderRegistry
+from adam.providers.registry import load_keys_from_vault
 from adam.security import keystore
 
 app = typer.Typer()
@@ -151,14 +154,14 @@ def unlock(
         if is_new_vault:
             console.print("\n[bold cyan]🔐 First Time Setup[/bold cyan]")
             console.print("[dim]Create a passphrase to encrypt your secrets.[/dim]\n")
-            passphrase = Prompt.ask("Enter new passphrase", password=True)
-            confirm = Prompt.ask("Confirm passphrase", password=True)
+            passphrase = Prompt.ask("Enter new passphrase")
+            confirm = Prompt.ask("Confirm passphrase")
             
             if passphrase != confirm:
                 console.print("[red]Passphrases do not match[/red]")
                 raise typer.Exit(1)
         else:
-            passphrase = Prompt.ask("Enter passphrase", password=True)
+            passphrase = Prompt.ask("Enter passphrase")
 
     if unlock_and_load(vault, passphrase):
         if is_new_vault:
@@ -169,7 +172,7 @@ def unlock(
             
             # Ask if they want to set up API keys
             if Confirm.ask("\nWould you like to add an API key now?", default=True):
-                setup_api()
+                setup_api.callback()
         else:
             console.print("[green]✓ Vault unlocked[/green]")
     else:
@@ -199,6 +202,11 @@ def add(
         None,
         "--passphrase", "-p",
         help="Vault passphrase (or set ADAM_VAULT_PASSPHRASE env var)"
+    ),
+    show: bool = typer.Option(
+        False,
+        "--show",
+        help="Show input (don't mask) - useful for SSH/paste issues"
     )
 ):
     """Add a secret to the vault."""
@@ -208,14 +216,24 @@ def add(
         if passphrase is None:
             passphrase = os.environ.get(VAULT_SESSION_ENV)
         if passphrase is None:
-            passphrase = Prompt.ask("Enter vault passphrase", password=True)
+            passphrase = Prompt.ask("Enter vault passphrase")
         
         if not unlock_and_load(vault, passphrase):
             console.print("[red]Failed to unlock vault[/red]")
             raise typer.Exit(1)
 
     if value is None:
-        value = Prompt.ask(f"Enter value for [cyan]{key}[/cyan]", password=True)
+        # Use show flag to determine if we mask input
+        if show:
+            value = Prompt.ask(f"Enter value for [cyan]{key}[/cyan] (visible)")
+        else:
+            try:
+                value = Prompt.ask(f"Enter value for [cyan]{key}[/cyan]", password=True)
+            except EOFError:
+                # Fallback if password prompt fails (SSH issues)
+                console.print("[yellow]Password prompt failed. Use --show flag:[/yellow]")
+                console.print(f"[dim]  adam vault add {key} --show[/dim]")
+                raise typer.Exit(1)
     
     vault.set(key, value)
     
@@ -246,7 +264,7 @@ def get(
         if passphrase is None:
             passphrase = os.environ.get(VAULT_SESSION_ENV)
         if passphrase is None:
-            passphrase = Prompt.ask("Enter vault passphrase", password=True)
+            passphrase = Prompt.ask("Enter vault passphrase")
         
         if not unlock_and_load(vault, passphrase):
             console.print("[red]Failed to unlock vault[/red]")
@@ -282,7 +300,7 @@ def delete(
         if passphrase is None:
             passphrase = os.environ.get(VAULT_SESSION_ENV)
         if passphrase is None:
-            passphrase = Prompt.ask("Enter vault passphrase", password=True)
+            passphrase = Prompt.ask("Enter vault passphrase")
         
         if not unlock_and_load(vault, passphrase):
             console.print("[red]Failed to unlock vault[/red]")
@@ -315,7 +333,7 @@ def list_keys(
         if passphrase is None:
             passphrase = os.environ.get(VAULT_SESSION_ENV)
         if passphrase is None:
-            passphrase = Prompt.ask("Enter vault passphrase", password=True)
+            passphrase = Prompt.ask("Enter vault passphrase")
         
         if not unlock_and_load(vault, passphrase):
             console.print("[red]Failed to unlock vault[/red]")
@@ -358,7 +376,7 @@ def setup_api():
     if not vault.is_unlocked:
         passphrase = os.environ.get(VAULT_SESSION_ENV)
         if passphrase is None:
-            passphrase = Prompt.ask("Enter vault passphrase", password=True)
+            passphrase = Prompt.ask("Enter vault passphrase")
         
         if not unlock_and_load(vault, passphrase):
             console.print("[red]Failed to unlock vault[/red]")
@@ -373,24 +391,17 @@ def setup_api():
     table.add_column("Provider", style="cyan")
     table.add_column("Description", style="white")
     table.add_column("Status", style="green")
-    table.add_column("Get Key", style="dim")
 
     provider_list = list(API_PROVIDERS.items())
     for idx, (provider_id, info) in enumerate(provider_list, 1):
         has_key = keystore.has(provider_id)
         status = "✓ Configured" if has_key else "○ Not set"
         status_style = "green" if has_key else "yellow"
-        preview = keystore.preview(provider_id, 4) if has_key else ""
-        status_text = f"[{status_style}]{status}[/{status_style}]"
-        if preview:
-            status_text += f" [dim]({preview})[/dim]"
-        
         table.add_row(
             str(idx),
             info["name"],
             info["description"],
-            status_text,
-            f"[link={info['url']}]{info['url']}[/link]"
+            f"[{status_style}]{status}[/{status_style}]"
         )
     
     console.print(table)
@@ -405,11 +416,6 @@ def setup_api():
     )
 
     if selection == "0":
-        configured = len(keystore.list_providers())
-        if configured > 0:
-            console.print(f"\n[green]✓ Setup complete - {configured} provider(s) configured[/green]")
-        else:
-            console.print("[dim]No providers configured[/dim]")
         return
 
     provider_id, info = provider_list[int(selection) - 1]
@@ -418,9 +424,16 @@ def setup_api():
     console.print(f"[dim]{info['description']}[/dim]")
     console.print(f"[dim]Get your API key: {info['url']}[/dim]\n")
 
-    api_key = Prompt.ask("Enter API key (leave empty to skip)", password=True)
+    # Try password prompt, fallback to visible input
+    console.print("[yellow]Enter API key (input will be hidden):[/yellow]")
+    try:
+        api_key = Prompt.ask("API key", password=True)
+    except EOFError:
+        console.print("[yellow]Hidden input failed. Type/paste your key (will be visible):[/yellow]")
+        api_key = Prompt.ask("API key (visible)")
     
-    if api_key:
+    if api_key and api_key.strip():
+        api_key = api_key.strip()
         # Store in vault (encrypted)
         vault.set(info["key"], api_key)
         # Load into secure keystore
@@ -432,7 +445,7 @@ def setup_api():
         
         # Check if they want to add more
         if Confirm.ask("\nAdd another provider?", default=False):
-            setup_api()
+            setup_api.callback()
     else:
         console.print("[yellow]Skipped - no key provided[/yellow]")
 
@@ -444,14 +457,14 @@ def change_passphrase():
 
     # First unlock with current passphrase
     if not vault.is_unlocked:
-        current = Prompt.ask("Enter current passphrase", password=True)
+        current = Prompt.ask("Enter current passphrase")
         if not unlock_and_load(vault, current):
             console.print("[red]Incorrect passphrase[/red]")
             raise typer.Exit(1)
 
     console.print("\n[bold cyan]🔐 Change Passphrase[/bold cyan]")
-    new_pass = Prompt.ask("Enter new passphrase", password=True)
-    confirm = Prompt.ask("Confirm new passphrase", password=True)
+    new_pass = Prompt.ask("Enter new passphrase")
+    confirm = Prompt.ask("Confirm new passphrase")
 
     if new_pass != confirm:
         console.print("[red]Passphrases do not match[/red]")
